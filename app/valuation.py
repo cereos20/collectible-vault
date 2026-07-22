@@ -1,4 +1,5 @@
 import re
+import time
 import random
 import logging
 import statistics
@@ -77,10 +78,10 @@ def clean_comic_title_for_search(raw_title: str) -> str:
     if not raw_title:
         return ""
 
-    # 1. Strip parentheticals like (Marvel Comics), (1991), (1st Appearance...)
+    # 1. Strip parentheticals
     text = re.sub(r"\([^)]*\)", "", raw_title)
 
-    # 2. Strip volume notations like ', Vol. 5' or 'Vol 1' or 'vol. 3'
+    # 2. Strip volume notations
     text = re.sub(r",?\s*vol\.?\s*\d+", "", text, flags=re.IGNORECASE)
 
     # 3. Strip variant letter suffixes from issue numbers (#10A -> 10, #25A1 -> 25), preserving decimals (#700.1)
@@ -97,20 +98,13 @@ def clean_comic_title_for_search(raw_title: str) -> str:
 sanitize_search_query = clean_comic_title_for_search
 
 
-def build_ebay_search_query(title: str, category: str, condition_grade: Optional[str] = None) -> str:
+def build_ebay_search_query(title: str, category: str = "comic", condition_grade: Optional[str] = None) -> str:
     """
-    Constructs an optimized eBay search query using clean_comic_title_for_search.
+    Constructs a clean, direct eBay search query: {Cleaned Series Name} {Issue Number}.
+    Omits inline negative search terms from search query string and filters listings in Python instead.
     Log line format: [VALUATION QUERY] Original: "{raw_title}" -> Cleaned: "{cleaned_query}"
     """
-    cleaned_title = clean_comic_title_for_search(title)
-    cond_clean = (condition_grade or "").lower()
-    is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
-
-    query = cleaned_title
-    if category.lower() == "comic" and not is_graded:
-        exclude_terms = "-lot -set -run -collection -bundle -cgc -cbcs -graded -slab"
-        query = f"{query} {exclude_terms}"
-
+    query = clean_comic_title_for_search(title)
     log_msg = f'[VALUATION QUERY] Original: "{title}" -> Cleaned: "{query}"'
     logger.info(log_msg)
     print(log_msg)
@@ -118,19 +112,23 @@ def build_ebay_search_query(title: str, category: str, condition_grade: Optional
     return query
 
 
-def verify_comp_title_match(comp_title: str, target_issue: Optional[str] = None) -> bool:
+def verify_comp_title_match(comp_title: str, target_issue: Optional[str] = None, is_graded: bool = False) -> bool:
     """
-    Verifies that returned eBay sold title matches target issue and is not a multi-issue bundle / TPB.
+    In-Memory Post-Filtering (Python Side):
+    Filters returned listing titles in Python, dropping any item where the listing title contains:
+    ['lot', 'set', 'run', 'collection', 'bundle', 'cgc', 'cbcs', 'pgx', 'graded', 'slab'] for raw comics.
     """
     title_lower = comp_title.lower()
-    # Discard trade paperbacks, graphic novels, or multi-issue lots
-    bundle_terms = ["tpb", "trade paperback", "graphic novel", "lot of", "complete run", "bundle"]
-    if any(term in title_lower for term in bundle_terms):
-        return False
+
+    if not is_graded:
+        negative_terms = ['lot', 'set', 'run', 'collection', 'bundle', 'cgc', 'cbcs', 'pgx', 'graded', 'slab', 'tpb', 'trade paperback', 'graphic novel']
+        for term in negative_terms:
+            if re.search(r'\b' + re.escape(term) + r'\b', title_lower):
+                return False
 
     if target_issue:
         clean_issue = target_issue.lstrip("#").strip()
-        if clean_issue and not re.search(r'\b' + re.escape(clean_issue) + r'\b', comp_title):
+        if clean_issue and not re.search(r'\b' + re.escape(clean_issue) + r'\b', title_lower):
             return False
 
     return True
@@ -228,7 +226,7 @@ def fetch_ebay_sold_comps(
     Fetches eBay completed & sold listings comps with Barcode/UPC priority and clean title query fallback.
     If 0 valid comp sales found (or lookup fails), returns strictly $0.00.
     """
-    # 1. Priority 1: Barcode / UPC Search
+    # Priority 1: Barcode / UPC Search
     clean_barcode = barcode.strip() if barcode else None
     if clean_barcode:
         upc_comps = query_ebay_sold_listings(clean_barcode, barcode=clean_barcode)
@@ -240,7 +238,7 @@ def fetch_ebay_sold_comps(
                 print(log_msg)
                 return final_price
 
-    # 2. Priority 2: Cleaned Title Query ({Cleaned Series Name} {Issue Number})
+    # Priority 2: Cleaned Title Query ({Cleaned Series Name} {Issue Number})
     title_query = build_ebay_search_query(title, category, condition_grade)
     title_comps = query_ebay_sold_listings(title_query)
 
@@ -252,7 +250,7 @@ def fetch_ebay_sold_comps(
             print(log_msg)
             return final_price
 
-    # 3. Strict $0.00 Fallback
+    # Strict $0.00 Fallback
     no_comps_msg = f"[VALUATION NO COMPS] Item: {title} | Setting market_value = $0.00"
     logger.warning(no_comps_msg)
     print(no_comps_msg)
@@ -265,7 +263,11 @@ def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
     updated_summary = []
 
     now = datetime.utcnow()
-    for item in items:
+    for idx, item in enumerate(items):
+        # Brief rate-limit politeness delay between batch requests (0.5s)
+        if idx > 0:
+            time.sleep(0.5)
+
         old_val = item.current_market_value
         new_val = fetch_ebay_sold_comps(
             title=item.title,

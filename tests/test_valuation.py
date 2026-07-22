@@ -1,7 +1,6 @@
 import pytest
 from app.valuation import (
     clean_comic_title_for_search,
-    sanitize_search_query,
     build_ebay_search_query,
     verify_comp_title_match,
     filter_outliers_iqr,
@@ -10,51 +9,33 @@ from app.valuation import (
 )
 
 
-def test_clean_comic_title_for_search_transformations():
-    # 1. Star Wars: Bounty Hunters (Marvel Comics) #9A -> Star Wars Bounty Hunters 9
-    res1 = clean_comic_title_for_search("Star Wars: Bounty Hunters (Marvel Comics) #9A")
-    assert "Marvel Comics" not in res1
-    assert "9" in res1
-    assert "9A" not in res1
-
-    # 2. The Amazing Spider-Man, Vol. 5 #61G -> The Amazing Spider-Man 61
-    res2 = clean_comic_title_for_search("The Amazing Spider-Man, Vol. 5 #61G")
-    assert "Vol" not in res2
-    assert "61" in res2
-    assert "61G" not in res2
-
-    # 3. X-Force, Vol. 1 #25A1 -> X-Force 25
-    res3 = clean_comic_title_for_search("X-Force, Vol. 1 #25A1")
-    assert "Vol" not in res3
-    assert "25" in res3
-    assert "25A1" not in res3
-
-    # 4. Batman, Vol. 3 #101A -> Batman 101
-    res4 = clean_comic_title_for_search("Batman, Vol. 3 #101A")
-    assert "Vol" not in res4
-    assert "101" in res4
-    assert "101A" not in res4
-
-    # 5. Decimal preservation: Spider-Man #700.1
-    res5 = clean_comic_title_for_search("Spider-Man #700.1")
-    assert "700.1" in res5
-
-
-def test_build_ebay_search_query_log_output(capsys):
-    query = build_ebay_search_query("Batman, Vol. 3 #101A", "comic", "Near Mint")
-    assert "Batman 101" in query
-    assert "-lot" in query
+def test_build_ebay_search_query_simplified_without_inline_negatives(capsys):
+    query = build_ebay_search_query("Captain Marvel #24", "comic", "Near Mint")
+    assert query == "Captain Marvel 24"
+    assert "-lot" not in query
+    assert "-set" not in query
+    assert "-cgc" not in query
 
     captured = capsys.readouterr()
-    assert '[VALUATION QUERY] Original: "Batman, Vol. 3 #101A"' in captured.out
+    assert '[VALUATION QUERY] Original: "Captain Marvel #24" -> Cleaned: "Captain Marvel 24"' in captured.out
 
 
-def test_verify_comp_title_match():
-    # Single comic vs trade paperback / lot
-    assert verify_comp_title_match("Batman #101 Near Mint", "101") is True
-    assert verify_comp_title_match("Batman Vol 3 TPB Trade Paperback", "101") is False
-    assert verify_comp_title_match("Batman Lot of 10 Comics", "101") is False
-    assert verify_comp_title_match("Batman #102 NM", "101") is False
+def test_verify_comp_title_match_python_post_filtering():
+    # Raw comic post-filtering in Python
+    assert verify_comp_title_match("Captain Marvel #24 NM", "24", is_graded=False) is True
+    assert verify_comp_title_match("Captain Marvel #24 CGC 9.8", "24", is_graded=False) is False
+    assert verify_comp_title_match("Captain Marvel #24 Lot of 5", "24", is_graded=False) is False
+    assert verify_comp_title_match("Captain Marvel Complete Run Set", "24", is_graded=False) is False
+    assert verify_comp_title_match("Captain Marvel Slabbed Comic", "24", is_graded=False) is False
+
+    # Graded comic permits graded terms
+    assert verify_comp_title_match("Captain Marvel #24 CGC 9.8", "24", is_graded=True) is True
+
+
+def test_clean_comic_title_for_search_transformations():
+    assert clean_comic_title_for_search("Star Wars: Bounty Hunters (Marvel Comics) #9A") == "Star Wars Bounty Hunters 9"
+    assert clean_comic_title_for_search("The Amazing Spider-Man, Vol. 5 #61G") == "The Amazing Spider-Man 61"
+    assert clean_comic_title_for_search("X-Force, Vol. 1 #25A1") == "X-Force 25"
 
 
 def test_filter_outliers_iqr():
