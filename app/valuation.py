@@ -13,6 +13,12 @@ from app.models import CollectibleItem, ValuationHistory, PriceHistory
 
 logger = logging.getLogger("vault.valuation")
 
+# Print boot configuration status
+_has_client_id = bool(os.environ.get("EBAY_CLIENT_ID"))
+_boot_log = f"[EBAY CONFIG] EBAY_CLIENT_ID present: {_has_client_id}"
+logger.info(_boot_log)
+print(_boot_log)
+
 # In-Memory Cache for eBay OAuth2 Client Credentials Access Token
 _EBAY_TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0}
 
@@ -69,9 +75,21 @@ def get_ebay_oauth_token() -> Optional[str]:
     client_id = os.environ.get("EBAY_CLIENT_ID")
     client_secret = os.environ.get("EBAY_CLIENT_SECRET")
 
-    if not client_id or not client_secret:
-        logger.debug("[VALUATION OAUTH] EBAY_CLIENT_ID or EBAY_CLIENT_SECRET not configured.")
+    if not client_id:
+        err_msg = "[EBAY ERROR] Missing EBAY_CLIENT_ID in environment"
+        logger.warning(err_msg)
+        print(err_msg)
         return None
+
+    if not client_secret:
+        err_msg = "[EBAY ERROR] Missing EBAY_CLIENT_SECRET in environment"
+        logger.warning(err_msg)
+        print(err_msg)
+        return None
+
+    auth_log = "[EBAY AUTH] Requesting token..."
+    logger.info(auth_log)
+    print(auth_log)
 
     try:
         credentials = f"{client_id}:{client_secret}"
@@ -98,10 +116,14 @@ def get_ebay_oauth_token() -> Optional[str]:
             print(log_msg)
             return token
         else:
-            logger.error(f"[VALUATION OAUTH] Failed to fetch eBay OAuth token: {response.status_code} {response.text}")
+            fail_msg = f"[EBAY ERROR] OAuth token request failed with status code {response.status_code}: {response.text}"
+            logger.error(fail_msg)
+            print(fail_msg)
             return None
     except Exception as e:
-        logger.error(f"[VALUATION OAUTH] Error requesting eBay OAuth token: {e}")
+        fail_msg = f"[EBAY ERROR] Error requesting eBay OAuth token: {e}"
+        logger.error(fail_msg)
+        print(fail_msg)
         return None
 
 
@@ -110,6 +132,10 @@ def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]
     Queries official eBay Browse API (/buy/browse/v1/item_summary/search) with OAuth2 bearer token.
     Extracts price values from item summaries.
     """
+    search_log = f"[EBAY API SEARCH] Querying term: '{query}'"
+    logger.info(search_log)
+    print(search_log)
+
     token = get_ebay_oauth_token()
     if not token:
         return []
@@ -128,9 +154,12 @@ def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]
 
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=5)
+        summaries = resp.json().get("itemSummaries", []) if resp.status_code == 200 else []
+        result_log = f"[EBAY API RESULT] Status Code: {resp.status_code} | Items Found: {len(summaries)}"
+        logger.info(result_log)
+        print(result_log)
+
         if resp.status_code == 200:
-            data = resp.json()
-            summaries = data.get("itemSummaries", [])
             prices = []
             for item in summaries:
                 price_val = None
@@ -143,10 +172,9 @@ def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]
                     prices.append(price_val)
             return prices
         else:
-            logger.warning(f"[VALUATION BROWSE API] Query '{query}' returned status: {resp.status_code}")
             return []
     except Exception as e:
-        logger.error(f"[VALUATION BROWSE API] Exception querying eBay API: {e}")
+        logger.error(f"[EBAY API ERROR] Exception querying eBay API: {e}")
         return []
 
 
@@ -199,6 +227,17 @@ def build_ebay_search_query(title: str, category: str = "comic", condition_grade
     logger.info(log_msg)
     print(log_msg)
     return query
+
+
+def build_broader_ebay_search_query(title: str) -> str:
+    """
+    Secondary broader search query builder: strips issue numbers and variant suffixes.
+    Example: 'Captain Marvel #24' -> 'Captain Marvel'
+    """
+    cleaned = clean_comic_title_for_search(title)
+    broader = re.sub(r"\b\d+(?:\.\d+)?\b", "", cleaned).strip()
+    broader = re.sub(r"\s+", " ", broader).strip()
+    return broader
 
 
 def verify_comp_title_match(comp_title: str, target_issue: Optional[str] = None, is_graded: bool = False) -> bool:
@@ -317,7 +356,8 @@ def fetch_ebay_sold_comps(
     """
     Valuation Engine Fallback Hierarchy:
     Priority 1: Official eBay Browse API (UPC lookup)
-    Priority 2: Official eBay Browse API (Cleaned Title search)
+    Priority 2: Official eBay Browse API (Cleaned Title search: {Cleaned Title} {Issue})
+    Priority 2b: Official eBay Browse API (Broader Title search without issue #)
     Priority 3: MyComicShop fallback scraper / local benchmark lookup
     Fallback Default: Set market_value = $0.00 if 0 comps found.
     """
@@ -344,6 +384,18 @@ def fetch_ebay_sold_comps(
             logger.info(log_msg)
             print(log_msg)
             return final_price
+
+    # Priority 2b: Official eBay Browse API (Broader Title search without issue numbers)
+    broader_query = build_broader_ebay_search_query(title)
+    if broader_query and broader_query != title_query:
+        api_broader_comps = query_ebay_browse_api(broader_query)
+        if api_broader_comps:
+            final_price = calculate_comp_fmv(api_broader_comps, category=category, condition_grade=condition_grade, current_val=current_val)
+            if final_price > 0:
+                log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: eBay Browse API (Broader Title) | Comps Found: {len(api_broader_comps)} | Final Price: ${final_price:.2f}"
+                logger.info(log_msg)
+                print(log_msg)
+                return final_price
 
     # Priority 3: MyComicShop / local benchmark fallback scraper (UPC lookup)
     if clean_barcode:
