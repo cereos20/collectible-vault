@@ -13,6 +13,17 @@ class ValuationHistoryResponse(BaseModel):
         from_attributes = True
 
 
+class PriceHistoryResponse(BaseModel):
+    id: int
+    item_id: int
+    price: float
+    source: str
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class CollectibleBase(BaseModel):
     title: str = Field(..., example="The Amazing Spider-Man #300")
     category: str = Field(..., example="comic")  # comic, funko, figure, trading_card, other
@@ -39,6 +50,12 @@ class CollectibleUpdate(BaseModel):
     image_url: Optional[str] = None
     barcode: Optional[str] = None
     metadata_json: Optional[Dict[str, Any]] = None
+    # Alias edit fields
+    issue_number: Optional[str] = None
+    grade: Optional[str] = None
+    cost_basis: Optional[float] = None
+    location: Optional[str] = None
+    status: Optional[str] = None
 
 
 class CollectibleResponse(CollectibleBase):
@@ -81,3 +98,23 @@ class DashboardStatsResponse(BaseModel):
 
 class SelectModelRequest(BaseModel):
     model: str
+
+
+class WatchlistBase(BaseModel):
+    title: str
+    issue: Optional[str] = None
+    min_grade: Optional[str] = "Near Mint"
+    target_price: float = Field(0.0, ge=0.0)
+    upc: Optional[str] = None
+
+
+class WatchlistCreate(WatchlistBase):
+    pass
+
+
+class WatchlistResponse(WatchlistBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

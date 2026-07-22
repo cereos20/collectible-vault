@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.database import get_db, init_db
-from app.models import CollectibleItem, ValuationHistory
+from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem
 from app.schemas import (
     CollectibleCreate,
     CollectibleUpdate,
@@ -17,7 +17,9 @@ from app.schemas import (
     BarcodeIntakeRequest,
     VisionIntakeResponse,
     DashboardStatsResponse,
-    SelectModelRequest
+    SelectModelRequest,
+    WatchlistCreate,
+    WatchlistResponse
 )
 from app.vision_ai import analyze_collectible_image
 from app.valuation import lookup_barcode_data, refresh_all_valuations, seed_sample_data_if_empty
@@ -231,7 +233,22 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
         raise HTTPException(status_code=404, detail="Collectible item not found")
 
     update_data = item_in.dict(exclude_unset=True)
-    
+
+    # Handle alias edit field mappings (grade -> condition_grade, cost_basis -> purchase_price)
+    if "grade" in update_data and update_data["grade"] is not None:
+        update_data["condition_grade"] = update_data.pop("grade")
+    if "cost_basis" in update_data and update_data["cost_basis"] is not None:
+        update_data["purchase_price"] = update_data.pop("cost_basis")
+
+    # Update metadata fields (issue_number, location, status)
+    meta = dict(item.metadata_json or {})
+    for meta_key in ["issue_number", "location", "status"]:
+        if meta_key in update_data:
+            val = update_data.pop(meta_key)
+            if val is not None:
+                meta[meta_key] = val
+    item.metadata_json = meta
+
     # Check if market value updated to log history
     if "current_market_value" in update_data and update_data["current_market_value"] != item.current_market_value:
         vh = ValuationHistory(
@@ -242,7 +259,8 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
         db.add(vh)
 
     for field, val in update_data.items():
-        setattr(item, field, val)
+        if hasattr(item, field) and val is not None:
+            setattr(item, field, val)
 
     db.commit()
     db.refresh(item)
@@ -307,3 +325,33 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         category_breakdown=category_breakdown,
         top_valued_items=top_items
     )
+
+
+# --- WATCHLIST REST API ENDPOINTS ---
+
+@app.get("/api/watchlist", response_model=List[WatchlistResponse])
+def get_watchlist(db: Session = Depends(get_db)):
+    """Fetches all items in the user's target watchlist."""
+    items = db.query(WatchlistItem).order_by(desc(WatchlistItem.created_at)).all()
+    return items
+
+
+@app.post("/api/watchlist", response_model=WatchlistResponse, status_code=201)
+def create_watchlist_item(item_in: WatchlistCreate, db: Session = Depends(get_db)):
+    """Creates a new watchlist target item."""
+    item = WatchlistItem(**item_in.dict())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/api/watchlist/{watchlist_id}")
+def delete_watchlist_item(watchlist_id: int, db: Session = Depends(get_db)):
+    """Deletes an item from the watchlist."""
+    item = db.query(WatchlistItem).filter(WatchlistItem.id == watchlist_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Watchlist item not found")
+    db.delete(item)
+    db.commit()
+    return {"status": "success", "message": f"Deleted watchlist item {watchlist_id}"}

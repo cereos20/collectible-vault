@@ -78,6 +78,18 @@ function setupEventListeners() {
     if (llmModelSelect) {
         llmModelSelect.addEventListener('change', handleModelChange);
     }
+
+    // Edit Item Form submit
+    const editForm = document.getElementById('editForm');
+    if (editForm) {
+        editForm.addEventListener('submit', handleEditSubmit);
+    }
+
+    // Watchlist Target Form submit
+    const watchlistForm = document.getElementById('watchlistForm');
+    if (watchlistForm) {
+        watchlistForm.addEventListener('submit', handleWatchlistSubmit);
+    }
 }
 
 // --- FETCH DASHBOARD STATS ---
@@ -178,6 +190,9 @@ function renderCollectibleCard(item) {
         <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
             <button class="btn btn-secondary" style="flex:1; padding:0.4rem; font-size:0.8rem;" onclick="openHistoryModal(${item.id})">
                 <i class="fas fa-chart-line"></i> Valuation
+            </button>
+            <button class="btn btn-secondary" style="padding:0.4rem 0.6rem; color:var(--accent-cyan);" onclick="openEditModal(${item.id})">
+                <i class="fas fa-edit"></i> Edit
             </button>
             <button class="btn btn-secondary" style="padding:0.4rem 0.6rem; color:var(--accent-rose);" onclick="deleteCollectible(${item.id})">
                 <i class="fas fa-trash"></i>
@@ -567,4 +582,137 @@ function escapeHtml(str) {
 }
 function roundTwo(num) {
     return Math.round(num * 100) / 100;
+}
+
+// --- ITEM EDIT FUNCTIONS ---
+
+async function openEditModal(itemId) {
+    try {
+        const res = await fetch(`/api/items/${itemId}`);
+        if (!res.ok) throw new Error('Item not found');
+        const item = await res.json();
+        const meta = item.metadata_json || {};
+
+        document.getElementById('editItemId').value = item.id;
+        document.getElementById('editTitle').value = item.title || '';
+        document.getElementById('editIssue').value = meta.issue_number || meta.issue || '';
+        document.getElementById('editGrade').value = item.condition_grade || 'Near Mint';
+        document.getElementById('editPrice').value = item.purchase_price || 0;
+        document.getElementById('editValue').value = item.current_market_value || 0;
+        document.getElementById('editLocation').value = meta.location || '';
+        document.getElementById('editStatus').value = meta.status || 'In Vault';
+        document.getElementById('editNotes').value = item.notes || '';
+
+        openModal('editModal');
+    } catch (err) {
+        alert('Error fetching item details for edit: ' + err.message);
+    }
+}
+
+async function handleEditSubmit(e) {
+    e.preventDefault();
+    const itemId = document.getElementById('editItemId').value;
+
+    const payload = {
+        title: document.getElementById('editTitle').value.trim(),
+        issue_number: document.getElementById('editIssue').value.trim(),
+        grade: document.getElementById('editGrade').value.trim(),
+        cost_basis: parseFloat(document.getElementById('editPrice').value) || 0.0,
+        current_market_value: parseFloat(document.getElementById('editValue').value) || 0.0,
+        location: document.getElementById('editLocation').value.trim(),
+        status: document.getElementById('editStatus').value,
+        notes: document.getElementById('editNotes').value.trim()
+    };
+
+    try {
+        const res = await fetch(`/api/items/${itemId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+            closeModal('editModal');
+            fetchDashboardStats();
+            loadCollectibles();
+        } else {
+            alert('Failed to update collectible item.');
+        }
+    } catch (err) {
+        alert('Error saving item changes: ' + err.message);
+    }
+}
+
+// --- WATCHLIST FUNCTIONS ---
+
+function openWatchlistModal() {
+    fetchWatchlist();
+    openModal('watchlistModal');
+}
+
+async function fetchWatchlist() {
+    const container = document.getElementById('watchlistContainer');
+    if (!container) return;
+
+    try {
+        const res = await fetch('/api/watchlist');
+        const items = await res.json();
+
+        if (items.length === 0) {
+            container.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--text-muted);">No watchlist target items added yet.</div>`;
+            return;
+        }
+
+        container.innerHTML = items.map(w => `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:0.75rem 1rem; margin-bottom:0.5rem; background:rgba(255,255,255,0.03); border-radius:var(--radius-sm); border:1px solid var(--border-color);">
+                <div>
+                    <strong style="color:white;">${escapeHtml(w.title)} ${w.issue ? '#' + escapeHtml(w.issue) : ''}</strong>
+                    <span style="font-size:0.8rem; color:var(--text-muted); margin-left:0.5rem;">[Min Grade: ${escapeHtml(w.min_grade || 'Raw')}]</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:1rem;">
+                    <span style="color:var(--accent-amber); font-weight:700;">Target Max: $${w.target_price.toFixed(2)}</span>
+                    <button class="btn btn-secondary" style="padding:0.3rem 0.5rem; color:var(--accent-rose);" onclick="deleteWatchlistItem(${w.id})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--accent-rose);">Error loading watchlist items.</div>`;
+    }
+}
+
+async function handleWatchlistSubmit(e) {
+    e.preventDefault();
+    const payload = {
+        title: document.getElementById('watchTitle').value.trim(),
+        issue: document.getElementById('watchIssue').value.trim() || null,
+        min_grade: document.getElementById('watchMinGrade').value.trim() || 'Near Mint',
+        target_price: parseFloat(document.getElementById('watchTargetPrice').value) || 0.0
+    };
+
+    try {
+        const res = await fetch('/api/watchlist', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            document.getElementById('watchlistForm').reset();
+            fetchWatchlist();
+        }
+    } catch (err) {
+        alert('Error adding watchlist item: ' + err.message);
+    }
+}
+
+async function deleteWatchlistItem(id) {
+    try {
+        const res = await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            fetchWatchlist();
+        }
+    } catch (err) {
+        alert('Delete failed: ' + err.message);
+    }
 }

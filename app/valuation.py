@@ -6,7 +6,7 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from app.models import CollectibleItem, ValuationHistory
+from app.models import CollectibleItem, ValuationHistory, PriceHistory
 
 logger = logging.getLogger("vault.valuation")
 
@@ -286,6 +286,15 @@ def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
             source="eBay Sold Comps"
         )
         db.add(history_entry)
+
+        # Price History Table Tracking (id, item_id, price, source, timestamp)
+        price_entry = PriceHistory(
+            item_id=item.id,
+            price=new_val,
+            source="eBay Sold Comps",
+            timestamp=now
+        )
+        db.add(price_entry)
         
         updated_summary.append({
             "id": item.id,

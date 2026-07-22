@@ -127,6 +127,7 @@
                 <button class="pill" data-category="figure"><i class="fas fa-robot"></i> Figures</button>
                 <button class="pill" data-category="trading_card"><i class="fas fa-id-card"></i> Trading Cards</button>
                 <button class="pill" data-category="other"><i class="fas fa-gem"></i> Other</button>
+                <button class="pill" data-category="watchlist" id="pillWatchlist" onclick="openWatchlistModal()"><i class="fas fa-bookmark"></i> Watchlist</button>
             </div>
 
             <select id="sortSelect" class="form-select" style="width: auto; padding: 0.5rem 1rem;">
@@ -299,6 +300,113 @@
             </div>
             <div style="height: 320px; width: 100%;">
                 <canvas id="historyChartCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- EDIT ITEM MODAL -->
+    <div class="modal-overlay" id="editModal">
+        <div class="modal-body glass-panel">
+            <div class="modal-header">
+                <h3><i class="fas fa-edit" style="color:var(--accent-cyan);"></i> Edit Collectible Item</h3>
+                <button class="modal-close" onclick="closeModal('editModal')">&times;</button>
+            </div>
+
+            <form id="editForm">
+                <input type="hidden" id="editItemId">
+                <div class="form-group">
+                    <label class="form-label">Collectible Title</label>
+                    <input type="text" id="editTitle" class="form-input" required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Issue / Box Number</label>
+                        <input type="text" id="editIssue" class="form-input" placeholder="e.g. #300 or Box 42">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Condition Grade</label>
+                        <input type="text" id="editGrade" class="form-input" placeholder="e.g. CGC 9.8, Near Mint">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Cost Basis / Purchase Price ($)</label>
+                        <input type="number" step="0.01" id="editPrice" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Current Market Value ($)</label>
+                        <input type="number" step="0.01" id="editValue" class="form-input" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Storage Location</label>
+                        <input type="text" id="editLocation" class="form-input" placeholder="e.g. Box #1 / Shelf B">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select id="editStatus" class="form-select">
+                            <option value="In Vault">In Vault</option>
+                            <option value="For Sale">For Sale</option>
+                            <option value="At Grading">At Grading (CGC/PSA)</option>
+                            <option value="Sold">Sold</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Notes & Extracted Metadata</label>
+                    <textarea id="editNotes" class="form-textarea" rows="2"></textarea>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1.5rem;">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('editModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- WATCHLIST MODAL -->
+    <div class="modal-overlay" id="watchlistModal">
+        <div class="modal-body glass-panel" style="max-width: 750px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-bookmark" style="color:var(--accent-amber);"></i> Target Watchlist</h3>
+                <button class="modal-close" onclick="closeModal('watchlistModal')">&times;</button>
+            </div>
+
+            <!-- Add Watchlist Form -->
+            <form id="watchlistForm" style="margin-bottom:1.5rem; padding-bottom:1.25rem; border-bottom:1px solid var(--border-color);">
+                <div class="form-row">
+                    <div class="form-group" style="flex:2;">
+                        <label class="form-label">Target Title</label>
+                        <input type="text" id="watchTitle" class="form-input" placeholder="e.g. Secret Wars #8" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Issue #</label>
+                        <input type="text" id="watchIssue" class="form-input" placeholder="e.g. 8">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Min Grade</label>
+                        <input type="text" id="watchMinGrade" class="form-input" placeholder="e.g. CGC 9.4">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Target Max Price ($)</label>
+                        <input type="number" step="0.01" id="watchTargetPrice" class="form-input" placeholder="e.g. 150.00" required>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:flex-end;">
+                    <button type="submit" class="btn btn-primary" style="font-size:0.85rem;"><i class="fas fa-plus"></i> Add to Watchlist</button>
+                </div>
+            </form>
+
+            <div id="watchlistContainer">
+                <!-- Dynamically populated via app.js -->
             </div>
         </div>
     </div>
