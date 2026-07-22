@@ -20,6 +20,7 @@ from app.schemas import (
 )
 from app.vision_ai import analyze_collectible_image
 from app.valuation import lookup_barcode_data, refresh_all_valuations, seed_sample_data_if_empty
+from app.importers.xml_importer import import_comics_from_xml
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vault")
@@ -99,6 +100,22 @@ async def intake_by_vision(file: UploadFile = File(...)):
         extracted_metadata=result.get("extracted_metadata", {}),
         summary=result.get("summary", "Successfully scanned item.")
     )
+
+
+@app.post("/api/import/xml")
+async def import_comics_xml(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """
+    Native XML bulk importer for comic book exports (CLZ/Collectorz, ComicBase, League of Comic Geeks).
+    """
+    contents = await file.read()
+    if not contents:
+        return {
+            "status": "error",
+            "imported_count": 0,
+            "errors": ["Uploaded XML file is empty."]
+        }
+
+    return import_comics_from_xml(db, contents)
 
 
 # --- COLLECTIBLES CRUD ENDPOINTS ---

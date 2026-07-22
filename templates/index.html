@@ -137,6 +137,9 @@
                 <button class="pill" style="flex:1; text-align:center;" onclick="showIntakeTab('barcode')">
                     <i class="fas fa-barcode"></i> Path B: Barcode / UPC Scan
                 </button>
+                <button class="pill" style="flex:1; text-align:center;" onclick="showIntakeTab('xml')">
+                    <i class="fas fa-file-code"></i> Path C: XML Bulk Import
+                </button>
             </div>
 
             <!-- Tab A: Vision AI Photo Upload -->
@@ -166,6 +169,25 @@
                 <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.5rem;">
                     <i class="fas fa-info-circle"></i> Quick Test Barcodes: <code>074470123456</code> (Comic), <code>889698451234</code> (Funko), <code>820650123456</code> (Card).
                 </div>
+            </div>
+
+            <!-- Tab C: XML Bulk Import -->
+            <div id="intakeTabXml" style="display:none;">
+                <div class="scanner-viewport" onclick="document.getElementById('xmlFileInput').click()" style="cursor:pointer; border-style:dashed;">
+                    <div id="xmlUploadBox" style="text-align:center; padding:1.5rem;">
+                        <i class="fas fa-file-import fa-3x" style="color:var(--accent-purple); margin-bottom:0.75rem;"></i>
+                        <h4>Upload Comic Book XML Export</h4>
+                        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0.3rem;">
+                            Supports CLZ / Collectorz, ComicBase, and League of Comic Geeks XML files.
+                        </p>
+                    </div>
+                </div>
+                <input type="file" id="xmlFileInput" accept=".xml" style="display:none;">
+                <div id="xmlImportProgress" style="display:none; text-align:center; margin-top:1rem; color:var(--accent-purple);">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p style="margin-top:0.5rem; font-size:0.9rem;">Parsing XML & Batch Inserting Comics...</p>
+                </div>
+                <div id="xmlImportToast" style="display:none; margin-top:1rem; padding:0.75rem 1rem; border-radius:var(--radius-sm); font-size:0.9rem;"></div>
             </div>
         </div>
     </div>
@@ -265,6 +287,13 @@
         function showIntakeTab(tab) {
             document.getElementById('intakeTabVision').style.display = tab === 'vision' ? 'block' : 'none';
             document.getElementById('intakeTabBarcode').style.display = tab === 'barcode' ? 'block' : 'none';
+            document.getElementById('intakeTabXml').style.display = tab === 'xml' ? 'block' : 'none';
+
+            const tabs = document.querySelectorAll('#intakeModal .pill');
+            tabs.forEach(btn => btn.classList.remove('active'));
+            if (tab === 'vision' && tabs[0]) tabs[0].classList.add('active');
+            if (tab === 'barcode' && tabs[1]) tabs[1].classList.add('active');
+            if (tab === 'xml' && tabs[2]) tabs[2].classList.add('active');
         }
     </script>
 </body>

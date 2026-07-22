@@ -65,6 +65,12 @@ function setupEventListeners() {
     if (btnLookupBarcode) {
         btnLookupBarcode.addEventListener('click', handleBarcodeLookup);
     }
+
+    // XML Bulk Import File Input
+    const xmlFileInput = document.getElementById('xmlFileInput');
+    if (xmlFileInput) {
+        xmlFileInput.addEventListener('change', handleXmlFileUpload);
+    }
 }
 
 // --- FETCH DASHBOARD STATS ---
@@ -391,6 +397,81 @@ async function deleteCollectible(itemId) {
         alert('Delete failed: ' + err.message);
     }
 }
+
+// --- XML BULK IMPORT UPLOADER ---
+async function handleXmlFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const progressEl = document.getElementById('xmlImportProgress');
+    const toastEl = document.getElementById('xmlImportToast');
+    const uploadBox = document.getElementById('xmlUploadBox');
+
+    if (progressEl) progressEl.style.display = 'block';
+    if (toastEl) toastEl.style.display = 'none';
+    if (uploadBox) uploadBox.style.opacity = '0.5';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const res = await fetch('/api/import/xml', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await res.json();
+
+        if (progressEl) progressEl.style.display = 'none';
+        if (uploadBox) uploadBox.style.opacity = '1';
+
+        if (res.ok && (result.status === 'success' || result.imported_count > 0)) {
+            if (toastEl) {
+                toastEl.style.display = 'block';
+                toastEl.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
+                toastEl.style.border = '1px solid var(--accent-emerald)';
+                toastEl.style.color = '#6ee7b7';
+                toastEl.innerHTML = `<i class="fas fa-check-circle"></i> Successfully imported <strong>${result.imported_count}</strong> comic(s) into vault!`;
+            }
+
+            // Trigger dynamic update of vault dashboard
+            loadStats();
+            loadItems();
+        } else {
+            const errorMsg = (result.errors && result.errors.length) ? result.errors.join('<br>') : 'Failed to import XML file.';
+            if (toastEl) {
+                toastEl.style.display = 'block';
+                toastEl.style.backgroundColor = 'rgba(244, 63, 94, 0.2)';
+                toastEl.style.border = '1px solid var(--accent-rose)';
+                toastEl.style.color = '#fda4af';
+                toastEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Import Error: ${errorMsg}`;
+            }
+        }
+    } catch (err) {
+        if (progressEl) progressEl.style.display = 'none';
+        if (uploadBox) uploadBox.style.opacity = '1';
+        if (toastEl) {
+            toastEl.style.display = 'block';
+            toastEl.style.backgroundColor = 'rgba(244, 63, 94, 0.2)';
+            toastEl.style.border = '1px solid var(--accent-rose)';
+            toastEl.style.color = '#fda4af';
+            toastEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Upload Failed: ${err.message}`;
+        }
+    }
+
+    // Reset file input
+    e.target.value = '';
+}
+
+// Global aliases per requirements (trigger loadStats() and loadItems())
+function loadStats() {
+    return fetchDashboardStats();
+}
+function loadItems() {
+    return loadCollectibles();
+}
+
+window.loadStats = loadStats;
+window.loadItems = loadItems;
 
 // Helper Utilities
 function openModal(id) {
