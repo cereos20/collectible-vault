@@ -1,0 +1,79 @@
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
+from datetime import datetime
+
+class ValuationHistoryResponse(BaseModel):
+    id: int
+    item_id: int
+    value: float
+    recorded_at: datetime
+    source: str
+
+    class Config:
+        from_attributes = True
+
+
+class CollectibleBase(BaseModel):
+    title: str = Field(..., example="The Amazing Spider-Man #300")
+    category: str = Field(..., example="comic")  # comic, funko, figure, trading_card, other
+    purchase_price: float = Field(0.0, ge=0.0)
+    current_market_value: float = Field(0.0, ge=0.0)
+    condition_grade: Optional[str] = "Near Mint"
+    notes: Optional[str] = None
+    image_url: Optional[str] = None
+    barcode: Optional[str] = None
+    metadata_json: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class CollectibleCreate(CollectibleBase):
+    pass
+
+
+class CollectibleUpdate(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    purchase_price: Optional[float] = None
+    current_market_value: Optional[float] = None
+    condition_grade: Optional[str] = None
+    notes: Optional[str] = None
+    image_url: Optional[str] = None
+    barcode: Optional[str] = None
+    metadata_json: Optional[Dict[str, Any]] = None
+
+
+class CollectibleResponse(CollectibleBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    profit_loss: float = 0.0
+    profit_loss_percentage: float = 0.0
+    valuation_history: List[ValuationHistoryResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class BarcodeIntakeRequest(BaseModel):
+    barcode: str
+
+
+class VisionIntakeResponse(BaseModel):
+    title: str
+    category: str
+    publisher_or_brand: Optional[str] = None
+    issue_or_box_number: Optional[str] = None
+    condition_estimate: Optional[str] = "Raw / Near Mint"
+    estimated_market_value: float = 0.0
+    confidence_score: float = 0.85
+    extracted_metadata: Dict[str, Any] = Field(default_factory=dict)
+    summary: str
+
+
+class DashboardStatsResponse(BaseModel):
+    total_items: int
+    total_invested: float
+    current_vault_value: float
+    total_profit_loss: float
+    profit_loss_percentage: float
+    category_breakdown: Dict[str, int]
+    top_valued_items: List[CollectibleResponse]

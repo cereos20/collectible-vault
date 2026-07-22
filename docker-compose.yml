@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  collectible-vault:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: collectible-vault-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./data/vault.db
+      - OLLAMA_HOST=http://ollama-vision:11434
+      - OLLAMA_MODEL=qwen2-vl
+    volumes:
+      - vault-data:/app/data
+    networks:
+      - vault-network
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: collectible-vault-mcp
+    restart: unless-stopped
+    command: python mcp_server.py
+    environment:
+      - DATABASE_URL=sqlite:///./data/vault.db
+    volumes:
+      - vault-data:/app/data
+    networks:
+      - vault-network
+
+  ollama-vision:
+    image: ollama/ollama:latest
+    container_name: collectible-vault-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - vault-network
+
+networks:
+  vault-network:
+    driver: bridge
+
+volumes:
+  vault-data:
+  ollama-models:
