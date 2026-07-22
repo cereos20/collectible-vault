@@ -77,3 +77,7 @@ class DashboardStatsResponse(BaseModel):
     profit_loss_percentage: float
     category_breakdown: Dict[str, int]
     top_valued_items: List[CollectibleResponse]
+
+
+class SelectModelRequest(BaseModel):
+    model: str

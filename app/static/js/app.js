@@ -10,6 +10,7 @@ let valuationChart = null;
 function initApp() {
     fetchDashboardStats();
     loadCollectibles();
+    fetchLlmStatus();
     setupEventListeners();
 }
 
@@ -70,6 +71,12 @@ function setupEventListeners() {
     const xmlFileInput = document.getElementById('xmlFileInput');
     if (xmlFileInput) {
         xmlFileInput.addEventListener('change', handleXmlFileUpload);
+    }
+
+    // LLM Dynamic Model Selector
+    const llmModelSelect = document.getElementById('llmModelSelect');
+    if (llmModelSelect) {
+        llmModelSelect.addEventListener('change', handleModelChange);
     }
 }
 
@@ -472,6 +479,81 @@ function loadItems() {
 
 window.loadStats = loadStats;
 window.loadItems = loadItems;
+
+// --- OLLAMA LLM HEALTH & DYNAMIC MODEL SELECTOR ---
+let currentLlmStatusData = null;
+
+async function fetchLlmStatus() {
+    try {
+        const res = await fetch('/api/llm/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        currentLlmStatusData = data;
+
+        const badge = document.getElementById('llmBadge');
+        const textEl = document.getElementById('llmStatusText');
+        const selectEl = document.getElementById('llmModelSelect');
+
+        if (data.status === 'online') {
+            if (badge) {
+                badge.className = 'llm-badge online';
+                badge.title = `Connected to Ollama host at ${data.host}`;
+            }
+            if (textEl) {
+                textEl.innerHTML = `<i class="fas fa-circle status-dot"></i> LLM: Connected (${escapeHtml(data.active_model)})`;
+            }
+        } else {
+            if (badge) {
+                badge.className = 'llm-badge offline';
+                badge.title = data.troubleshooting || 'Ollama offline';
+            }
+            if (textEl) {
+                textEl.innerHTML = `<i class="fas fa-circle status-dot"></i> LLM: Offline (${escapeHtml(data.active_model)})`;
+            }
+        }
+
+        // Populate model dropdown selector
+        if (selectEl && data.models && data.models.length > 0) {
+            selectEl.innerHTML = data.models.map(m => {
+                const isSel = (m === data.active_model) ? 'selected' : '';
+                return `<option value="${escapeHtml(m)}" ${isSel}>${escapeHtml(m)}</option>`;
+            }).join('');
+        }
+    } catch (err) {
+        console.error('Error fetching LLM health status:', err);
+    }
+}
+
+async function handleModelChange(e) {
+    const selectedModel = e.target.value;
+    if (!selectedModel) return;
+
+    try {
+        const res = await fetch('/api/llm/select-model', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ model: selectedModel })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            fetchLlmStatus();
+            alert(`Active LLM model changed to: ${selectedModel}`);
+        } else {
+            alert('Failed to change active LLM model.');
+        }
+    } catch (err) {
+        alert('Error updating LLM model: ' + err.message);
+    }
+}
+
+function handleLlmBadgeClick() {
+    if (!currentLlmStatusData) return;
+    if (currentLlmStatusData.status === 'offline') {
+        alert(`Ollama LLM Status: Offline\nHost: ${currentLlmStatusData.host}\n\nTroubleshooting:\n${currentLlmStatusData.troubleshooting || 'Check OLLAMA_HOST IP or OLLAMA_ORIGINS cors settings on Windows VM.'}`);
+    } else {
+        alert(`Ollama LLM Status: Online 🟢\nHost: ${currentLlmStatusData.host}\nActive Model: ${currentLlmStatusData.active_model}\nAvailable Models: ${currentLlmStatusData.models.join(', ')}`);
+    }
+}
 
 // Helper Utilities
 function openModal(id) {

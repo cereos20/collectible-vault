@@ -44,6 +44,16 @@
         </div>
 
         <div class="nav-actions">
+            <!-- LLM Health Status Badge & Dynamic Model Selector -->
+            <div class="llm-status-container" id="llmStatusContainer">
+                <span class="llm-badge offline" id="llmBadge" onclick="handleLlmBadgeClick()" style="cursor:pointer;" title="Click for Ollama status details & troubleshooting">
+                    <i class="fas fa-circle status-dot"></i> <span id="llmStatusText">LLM: Checking...</span>
+                </span>
+                <select id="llmModelSelect" class="form-select llm-model-select" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; width: auto; background: rgba(0,0,0,0.4);" title="Select Active LLM Model">
+                    <option value="">Loading Models...</option>
+                </select>
+            </div>
+
             <button class="btn btn-secondary" id="btnRefreshValuations">
                 <i class="fas fa-sync-alt"></i> Refresh Valuations
             </button>

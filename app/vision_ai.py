@@ -5,9 +5,10 @@ import httpx
 import logging
 from typing import Dict, Any
 
+from app.services.llm import get_active_model, OLLAMA_HOST
+
 logger = logging.getLogger("vault.vision")
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2-vl")
 
 VISION_PROMPT = """Analyze this image of a collectible (comic book, Funko Pop box, action figure, trading card, or vintage item).
@@ -40,7 +41,7 @@ async def analyze_collectible_image(image_bytes: bytes, filename: str = "upload.
     base64_img = base64.b64encode(image_bytes).decode("utf-8")
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": get_active_model(),
         "prompt": VISION_PROMPT,
         "images": [base64_img],
         "stream": False,

@@ -16,11 +16,13 @@ from app.schemas import (
     CollectibleResponse,
     BarcodeIntakeRequest,
     VisionIntakeResponse,
-    DashboardStatsResponse
+    DashboardStatsResponse,
+    SelectModelRequest
 )
 from app.vision_ai import analyze_collectible_image
 from app.valuation import lookup_barcode_data, refresh_all_valuations, seed_sample_data_if_empty
 from app.importers.xml_importer import import_comics_from_xml
+from app.services.llm import check_ollama_status, set_active_model, get_active_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vault")
@@ -116,6 +118,28 @@ async def import_comics_xml(file: UploadFile = File(...), db: Session = Depends(
         }
 
     return import_comics_from_xml(db, contents)
+
+
+# --- LLM SERVICE ENDPOINTS ---
+
+@app.get("/api/llm/status")
+async def get_llm_status():
+    """
+    Pings Ollama server tag endpoint and returns connection status, active model, and installed models list.
+    """
+    return await check_ollama_status()
+
+
+@app.post("/api/llm/select-model")
+def select_llm_model(payload: SelectModelRequest):
+    """
+    Dynamically updates the active LLM model preference for vision/text processing calls.
+    """
+    active_model = set_active_model(payload.model)
+    return {
+        "status": "success",
+        "active_model": active_model
+    }
 
 
 # --- COLLECTIBLES CRUD ENDPOINTS ---
