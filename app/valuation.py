@@ -1,7 +1,10 @@
+import os
 import re
 import time
+import base64
 import random
 import logging
+import requests
 import statistics
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
@@ -9,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.models import CollectibleItem, ValuationHistory, PriceHistory
 
 logger = logging.getLogger("vault.valuation")
+
+# In-Memory Cache for eBay OAuth2 Client Credentials Access Token
+_EBAY_TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0}
 
 # Preset barcode lookup index for instant offline testing & comps simulation
 BARCODE_DATABASE: Dict[str, Dict[str, Any]] = {
@@ -51,6 +57,99 @@ BARCODE_DATABASE: Dict[str, Dict[str, Any]] = {
 }
 
 
+def get_ebay_oauth_token() -> Optional[str]:
+    """
+    Obtains application access token from eBay OAuth endpoint using client_credentials grant.
+    Caches token in memory until expiration.
+    """
+    now = time.time()
+    if _EBAY_TOKEN_CACHE["token"] and _EBAY_TOKEN_CACHE["expires_at"] > now + 60:
+        return _EBAY_TOKEN_CACHE["token"]
+
+    client_id = os.environ.get("EBAY_CLIENT_ID")
+    client_secret = os.environ.get("EBAY_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        logger.debug("[VALUATION OAUTH] EBAY_CLIENT_ID or EBAY_CLIENT_SECRET not configured.")
+        return None
+
+    try:
+        credentials = f"{client_id}:{client_secret}"
+        encoded_creds = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
+        
+        headers = {
+            "Authorization": f"Basic {encoded_creds}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        data = {
+            "grant_type": "client_credentials",
+            "scope": "https://api.ebay.com/oauth/api_scope"
+        }
+
+        response = requests.post("https://api.ebay.com/identity/v1/oauth2/token", headers=headers, data=data, timeout=5)
+        if response.status_code == 200:
+            res_data = response.json()
+            token = res_data.get("access_token")
+            expires_in = res_data.get("expires_in", 7200)
+            _EBAY_TOKEN_CACHE["token"] = token
+            _EBAY_TOKEN_CACHE["expires_at"] = now + expires_in
+            log_msg = "[VALUATION OAUTH] eBay OAuth 2.0 token successfully generated and cached."
+            logger.info(log_msg)
+            print(log_msg)
+            return token
+        else:
+            logger.error(f"[VALUATION OAUTH] Failed to fetch eBay OAuth token: {response.status_code} {response.text}")
+            return None
+    except Exception as e:
+        logger.error(f"[VALUATION OAUTH] Error requesting eBay OAuth token: {e}")
+        return None
+
+
+def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]:
+    """
+    Queries official eBay Browse API (/buy/browse/v1/item_summary/search) with OAuth2 bearer token.
+    Extracts price values from item summaries.
+    """
+    token = get_ebay_oauth_token()
+    if not token:
+        return []
+
+    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY-US"
+    }
+    params: Dict[str, Any] = {"limit": "10"}
+
+    if gtin:
+        params["gtin"] = gtin.strip()
+    else:
+        params["q"] = query.strip()
+
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            summaries = data.get("itemSummaries", [])
+            prices = []
+            for item in summaries:
+                price_val = None
+                if "price" in item and "value" in item["price"]:
+                    price_val = float(item["price"]["value"])
+                elif "currentBidPrice" in item and "value" in item["currentBidPrice"]:
+                    price_val = float(item["currentBidPrice"]["value"])
+                
+                if price_val and price_val > 0:
+                    prices.append(price_val)
+            return prices
+        else:
+            logger.warning(f"[VALUATION BROWSE API] Query '{query}' returned status: {resp.status_code}")
+            return []
+    except Exception as e:
+        logger.error(f"[VALUATION BROWSE API] Exception querying eBay API: {e}")
+        return []
+
+
 def lookup_barcode_data(barcode: str) -> Dict[str, Any]:
     """Look up barcode in local registry or return dynamic auto-generated match."""
     cleaned = barcode.strip() if barcode else ""
@@ -78,19 +177,11 @@ def clean_comic_title_for_search(raw_title: str) -> str:
     if not raw_title:
         return ""
 
-    # 1. Strip parentheticals
     text = re.sub(r"\([^)]*\)", "", raw_title)
-
-    # 2. Strip volume notations
     text = re.sub(r",?\s*vol\.?\s*\d+", "", text, flags=re.IGNORECASE)
-
-    # 3. Strip variant letter suffixes from issue numbers (#10A -> 10, #25A1 -> 25), preserving decimals (#700.1)
     text = re.sub(r"#?\b(\d+(?:\.\d+)?)[a-zA-Z]+\d*\b", r"\1", text)
-
-    # 4. Replace special punctuation (/, :, ,, #, quotes) with space
     text = re.sub(r"[/:,#\"']", " ", text)
 
-    # 5. Collapse consecutive whitespace into single space
     cleaned = re.sub(r"\s+", " ", text).strip()
     return cleaned
 
@@ -100,15 +191,13 @@ sanitize_search_query = clean_comic_title_for_search
 
 def build_ebay_search_query(title: str, category: str = "comic", condition_grade: Optional[str] = None) -> str:
     """
-    Constructs a clean, direct eBay search query: {Cleaned Series Name} {Issue Number}.
-    Omits inline negative search terms from search query string and filters listings in Python instead.
+    Constructs a clean, direct search query: {Cleaned Series Name} {Issue Number}.
     Log line format: [VALUATION QUERY] Original: "{raw_title}" -> Cleaned: "{cleaned_query}"
     """
     query = clean_comic_title_for_search(title)
     log_msg = f'[VALUATION QUERY] Original: "{title}" -> Cleaned: "{query}"'
     logger.info(log_msg)
     print(log_msg)
-
     return query
 
 
@@ -157,10 +246,10 @@ def filter_outliers_iqr(prices: List[float]) -> List[float]:
     return filtered if filtered else sorted_prices
 
 
-def query_ebay_sold_listings(query: str, barcode: Optional[str] = None) -> List[float]:
+def query_mycomicshop_fallback(query: str, barcode: Optional[str] = None) -> List[float]:
     """
-    Queries eBay completed & sold listings for matching comps.
-    Returns list of sold listing prices, or [] if 0 valid comps found.
+    MyComicShop / local benchmark fallback scraper query.
+    Used when official eBay API keys are not provided or yield 0 comps.
     """
     if barcode and barcode.strip() in BARCODE_DATABASE:
         return BARCODE_DATABASE[barcode.strip()].get("comps", [])
@@ -184,6 +273,9 @@ def query_ebay_sold_listings(query: str, barcode: Optional[str] = None) -> List[
         return [175.00, 180.00, 185.00]
 
     return []
+
+
+query_ebay_sold_listings = query_mycomicshop_fallback
 
 
 def calculate_comp_fmv(
@@ -223,34 +315,58 @@ def fetch_ebay_sold_comps(
     barcode: Optional[str] = None
 ) -> float:
     """
-    Fetches eBay completed & sold listings comps with Barcode/UPC priority and clean title query fallback.
-    If 0 valid comp sales found (or lookup fails), returns strictly $0.00.
+    Valuation Engine Fallback Hierarchy:
+    Priority 1: Official eBay Browse API (UPC lookup)
+    Priority 2: Official eBay Browse API (Cleaned Title search)
+    Priority 3: MyComicShop fallback scraper / local benchmark lookup
+    Fallback Default: Set market_value = $0.00 if 0 comps found.
     """
-    # Priority 1: Barcode / UPC Search
     clean_barcode = barcode.strip() if barcode else None
+
+    # Priority 1: Official eBay Browse API (UPC lookup)
     if clean_barcode:
-        upc_comps = query_ebay_sold_listings(clean_barcode, barcode=clean_barcode)
-        if upc_comps:
-            final_price = calculate_comp_fmv(upc_comps, category=category, condition_grade=condition_grade, current_val=current_val)
+        api_upc_comps = query_ebay_browse_api(clean_barcode, gtin=clean_barcode)
+        if api_upc_comps:
+            final_price = calculate_comp_fmv(api_upc_comps, category=category, condition_grade=condition_grade, current_val=current_val)
             if final_price > 0:
-                log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: UPC | Comps Found: {len(upc_comps)} | Final Price: ${final_price:.2f}"
+                log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: eBay Browse API (UPC) | Comps Found: {len(api_upc_comps)} | Final Price: ${final_price:.2f}"
                 logger.info(log_msg)
                 print(log_msg)
                 return final_price
 
-    # Priority 2: Cleaned Title Query ({Cleaned Series Name} {Issue Number})
+    # Priority 2: Official eBay Browse API (Cleaned Title search)
     title_query = build_ebay_search_query(title, category, condition_grade)
-    title_comps = query_ebay_sold_listings(title_query)
-
-    if title_comps:
-        final_price = calculate_comp_fmv(title_comps, category=category, condition_grade=condition_grade, current_val=current_val)
+    api_title_comps = query_ebay_browse_api(title_query)
+    if api_title_comps:
+        final_price = calculate_comp_fmv(api_title_comps, category=category, condition_grade=condition_grade, current_val=current_val)
         if final_price > 0:
-            log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: Title | Comps Found: {len(title_comps)} | Final Price: ${final_price:.2f}"
+            log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: eBay Browse API (Title) | Comps Found: {len(api_title_comps)} | Final Price: ${final_price:.2f}"
             logger.info(log_msg)
             print(log_msg)
             return final_price
 
-    # Strict $0.00 Fallback
+    # Priority 3: MyComicShop / local benchmark fallback scraper (UPC lookup)
+    if clean_barcode:
+        fb_upc_comps = query_mycomicshop_fallback(clean_barcode, barcode=clean_barcode)
+        if fb_upc_comps:
+            final_price = calculate_comp_fmv(fb_upc_comps, category=category, condition_grade=condition_grade, current_val=current_val)
+            if final_price > 0:
+                log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: UPC | Comps Found: {len(fb_upc_comps)} | Final Price: ${final_price:.2f}"
+                logger.info(log_msg)
+                print(log_msg)
+                return final_price
+
+    # Priority 3: MyComicShop / local benchmark fallback scraper (Title lookup)
+    fb_title_comps = query_mycomicshop_fallback(title_query)
+    if fb_title_comps:
+        final_price = calculate_comp_fmv(fb_title_comps, category=category, condition_grade=condition_grade, current_val=current_val)
+        if final_price > 0:
+            log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: Title | Comps Found: {len(fb_title_comps)} | Final Price: ${final_price:.2f}"
+            logger.info(log_msg)
+            print(log_msg)
+            return final_price
+
+    # Fallback Default: Set market_value = $0.00
     no_comps_msg = f"[VALUATION NO COMPS] Item: {title} | Setting market_value = $0.00"
     logger.warning(no_comps_msg)
     print(no_comps_msg)
@@ -264,7 +380,6 @@ def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
 
     now = datetime.utcnow()
     for idx, item in enumerate(items):
-        # Brief rate-limit politeness delay between batch requests (0.5s)
         if idx > 0:
             time.sleep(0.5)
 
@@ -287,7 +402,6 @@ def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
         )
         db.add(history_entry)
 
-        # Price History Table Tracking (id, item_id, price, source, timestamp)
         price_entry = PriceHistory(
             item_id=item.id,
             price=new_val,
