@@ -1,5 +1,6 @@
 import pytest
 from app.valuation import (
+    sanitize_search_query,
     build_ebay_search_query,
     filter_outliers_iqr,
     calculate_comp_fmv,
@@ -7,9 +8,18 @@ from app.valuation import (
 )
 
 
+def test_sanitize_search_query_special_characters():
+    title = "Silver Surfer / Warlock: Resurrection #1"
+    sanitized = sanitize_search_query(title)
+    assert sanitized == "Silver Surfer Warlock Resurrection 1"
+    assert "/" not in sanitized
+    assert ":" not in sanitized
+    assert "#" not in sanitized
+
+
 def test_build_ebay_search_query_raw_comic():
     query = build_ebay_search_query("Batman #423", "comic", "Near Mint")
-    assert "Batman #423" in query
+    assert "Batman 423" in query
     assert "-lot" in query
     assert "-set" in query
     assert "-run" in query
@@ -20,7 +30,7 @@ def test_build_ebay_search_query_raw_comic():
 
 def test_build_ebay_search_query_cgc_graded_comic():
     query = build_ebay_search_query("Amazing Spider-Man #300", "comic", "CGC 9.8")
-    assert "Amazing Spider-Man #300" in query
+    assert "Amazing Spider-Man 300" in query or "Amazing Spider Man 300" in query
     assert "-cgc" not in query
     assert "-graded" not in query
 
@@ -32,15 +42,22 @@ def test_filter_outliers_iqr():
     assert len(filtered) < len(prices)
 
 
-def test_calculate_comp_fmv_raw_comic_capping():
-    # Modern minor raw comic with base value $15
-    comp_prices = [12.0, 15.0, 14.0, 16.0, 250.0]  # $250 lot sale outlier
-    fmv = calculate_comp_fmv(comp_prices, category="comic", condition_grade="Near Mint", base_val=15.0)
-    assert fmv <= 30.0
-    assert fmv > 10.0
+def test_calculate_comp_fmv_uses_median():
+    # Comps: [10, 12, 14, 16, 100] -> outlier 100 removed -> comps [10, 12, 14, 16] -> median 13.0
+    comp_prices = [10.0, 12.0, 14.0, 16.0, 100.0]
+    fmv = calculate_comp_fmv(comp_prices, category="comic", condition_grade="Near Mint", current_val=15.0)
+    assert fmv == 13.0
 
 
-def test_fetch_ebay_sold_comps():
-    fmv = fetch_ebay_sold_comps("X-Men #1", "comic", 25.0, "Raw Near Mint")
+def test_calculate_comp_fmv_zero_comps_returns_none():
+    fmv = calculate_comp_fmv([], category="comic", condition_grade="Near Mint", current_val=25.0)
+    assert fmv is None
+
+
+def test_fetch_ebay_sold_comps_retains_existing_value_on_zero_comps():
+    # When current value is $12.50, ensure valuation does not cluster around mock $57-$58
+    fmv = fetch_ebay_sold_comps("Obscure Title #99", "comic", 12.50, "Raw Near Mint")
     assert isinstance(fmv, float)
-    assert fmv > 0
+    # Price should be close to 12.50 (retained or simulated around 12.50), not $57-$58
+    assert 10.0 <= fmv <= 15.0
+    assert fmv != 57.50

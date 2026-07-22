@@ -1,5 +1,7 @@
+import re
 import random
 import logging
+import statistics
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
@@ -60,16 +62,32 @@ def lookup_barcode_data(barcode: str) -> Dict[str, Any]:
     }
 
 
+def sanitize_search_query(title: str) -> str:
+    """
+    Sanitizes title strings by stripping special characters (slashes, colons, commas, quotes, etc.).
+    Example: 'Silver Surfer / Warlock: Resurrection #1' -> 'Silver Surfer Warlock Resurrection 1'
+    """
+    if not title:
+        return ""
+    
+    # Replace special punctuation (/, :, ,, ", ', #, -, etc.) with spaces
+    cleaned = re.sub(r"[^\w\s]", " ", title)
+    # Collapse consecutive spaces into a single space
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def build_ebay_search_query(title: str, category: str, condition_grade: Optional[str] = None) -> str:
     """
-    Constructs an optimized eBay search query.
+    Constructs a sanitized eBay search query format: {Cleaned Series Name} {Issue Number}.
     For raw/ungraded comics, excludes bulk keywords (-lot, -set, -run, -collection, -bundle)
     and slab keywords (-cgc, -cbcs, -graded, -slab).
     """
+    sanitized_title = sanitize_search_query(title)
     cond_clean = (condition_grade or "").lower()
     is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
 
-    query = title.strip()
+    query = sanitized_title
     if category.lower() == "comic" and not is_graded:
         exclude_terms = "-lot -set -run -collection -bundle -cgc -cbcs -graded -slab"
         query = f"{query} {exclude_terms}"
@@ -87,7 +105,6 @@ def filter_outliers_iqr(prices: List[float]) -> List[float]:
     sorted_prices = sorted(prices)
     n = len(sorted_prices)
     
-    # Calculate 25th (Q1) and 75th (Q3) percentiles
     q1_idx = int(n * 0.25)
     q3_idx = int(n * 0.75)
     q1 = sorted_prices[q1_idx]
@@ -101,59 +118,77 @@ def filter_outliers_iqr(prices: List[float]) -> List[float]:
     return filtered if filtered else sorted_prices
 
 
-def calculate_comp_fmv(comp_prices: List[float], category: str = "comic", condition_grade: Optional[str] = None, base_val: float = 0.0) -> float:
+def calculate_comp_fmv(
+    comp_prices: List[float],
+    category: str = "comic",
+    condition_grade: Optional[str] = None,
+    current_val: float = 0.0
+) -> Optional[float]:
     """
-    Calculates Fair Market Value (FMV) from sold comp prices using IQR outlier removal.
-    Caps unrealistic valuation spikes for raw modern minor issues.
+    Calculates Fair Market Value (FMV) using median across matching sold comps after 1.5x IQR outlier removal.
+    If comp_prices is empty or zero valid sales found, returns None (triggering fallback retention).
     """
     if not comp_prices:
-        return base_val if base_val > 0 else 15.0
+        return None
 
-    # 1. Remove extreme outliers outside 1.5x IQR
+    # 1. Filter extreme outliers outside 1.5x IQR
     clean_comps = filter_outliers_iqr(comp_prices)
+    if not clean_comps:
+        return None
 
-    # 2. Calculate median
-    sorted_clean = sorted(clean_comps)
-    n = len(sorted_clean)
-    mid = n // 2
-    if n % 2 == 0:
-        median_val = (sorted_clean[mid - 1] + sorted_clean[mid]) / 2.0
-    else:
-        median_val = sorted_clean[mid]
+    # 2. Use median calculation to avoid skew
+    median_val = statistics.median(clean_comps)
 
-    # 3. Check for raw comic capping (modern minor issues > $30)
+    # 3. Check for raw comic capping (modern minor issues > $30 when current_val is low)
     cond_clean = (condition_grade or "").lower()
     is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
 
     if category.lower() == "comic" and not is_graded:
-        # If modern/minor raw issue returns unrealistic value > $30 when base is low/raw
-        if median_val > 30.0 and base_val <= 30.0:
-            # Fallback or weight heavily toward title + issue exact match FMV cap
-            median_val = min(median_val, max(30.0, base_val * 1.2))
+        if median_val > 30.0 and current_val > 0 and current_val <= 30.0:
+            median_val = min(median_val, max(30.0, current_val * 1.25))
 
     return round(median_val, 2)
 
 
-def fetch_ebay_sold_comps(title: str, category: str, current_val: float, condition_grade: Optional[str] = None) -> float:
+def fetch_ebay_sold_comps(
+    title: str,
+    category: str,
+    current_val: float,
+    condition_grade: Optional[str] = None
+) -> float:
     """
-    Simulates / performs eBay completed & sold listings comps analysis.
-    Uses negative keywords to exclude lot/graded noise for raw comics and applies 1.5x IQR outlier filtering.
+    Fetches / simulates eBay completed & sold listings comps analysis.
+    If 0 valid comp sales found (or API fails), retains existing current_market_value (or fallback 0.0)
+    and logs a warning instead of returning a mock $57-$58 average.
     """
     query = build_ebay_search_query(title, category, condition_grade)
     logger.info(f"eBay Search Query: '{query}'")
 
-    base_val = current_val if current_val > 0 else 25.0
+    # If item has an existing valuation > 0, simulate comps around its value.
+    # Otherwise, if no comps found, retain existing value / return 0.0.
+    if current_val > 0:
+        simulated_comps = [
+            round(current_val * random.uniform(0.95, 1.05), 2) for _ in range(5)
+        ]
+        simulated_comps.append(round(current_val * 3.5, 2))  # High outlier lot
+    else:
+        simulated_comps = []
 
-    # Simulate realistic comp prices array around base value with noise & lot outliers
-    simulated_comps = [
-        round(base_val * random.uniform(0.90, 1.10), 2) for _ in range(6)
-    ]
-    # Add outlier high lot sale and low damaged copy
-    simulated_comps.append(round(base_val * 4.5, 2))
-    simulated_comps.append(round(base_val * 0.15, 2))
+    calculated_fmv = calculate_comp_fmv(
+        simulated_comps,
+        category=category,
+        condition_grade=condition_grade,
+        current_val=current_val
+    )
 
-    new_fmv = calculate_comp_fmv(simulated_comps, category=category, condition_grade=condition_grade, base_val=base_val)
-    return max(new_fmv, 1.0)
+    if calculated_fmv is None or calculated_fmv <= 0:
+        logger.warning(
+            f"No valid sold comp listings found for query '{query}'. "
+            f"Retaining existing market value: ${current_val:.2f}"
+        )
+        return max(current_val, 0.0)
+
+    return max(calculated_fmv, 0.0)
 
 
 def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
