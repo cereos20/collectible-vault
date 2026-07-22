@@ -12,24 +12,29 @@ def parse_currency(val_str: str) -> float:
     if not val_str:
         return 0.0
     try:
-        # Strip currency symbols, commas, spaces
         cleaned = re.sub(r"[^\d.-]", "", val_str)
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
         return 0.0
 
 
+def get_node_text(node: ET.Element, paths: List[str]) -> str:
+    """Searches element node using relative XPath paths or child tags for non-empty text."""
+    for path in paths:
+        found = node.find(path)
+        if found is not None and found.text and found.text.strip():
+            return found.text.strip()
+    return ""
+
+
 def extract_tag_value(element: ET.Element, tag_candidates: List[str]) -> str:
     """
     Searches child tags and element attributes for matching tag candidates (case-insensitive).
     """
-    # Normalize candidates
     cand_set = {c.lower().replace("_", "").replace("-", "") for c in tag_candidates}
 
-    # Check child tags first
     for child in element:
         normalized_tag = child.tag.lower().replace("_", "").replace("-", "")
-        # Remove XML namespace if present
         if "}" in normalized_tag:
             normalized_tag = normalized_tag.split("}", 1)[1]
         
@@ -38,7 +43,6 @@ def extract_tag_value(element: ET.Element, tag_candidates: List[str]) -> str:
             if val:
                 return val
 
-    # Check attributes if not found in child elements
     for attr_key, attr_val in element.attrib.items():
         normalized_attr = attr_key.lower().replace("_", "").replace("-", "")
         if normalized_attr in cand_set and attr_val:
@@ -50,11 +54,17 @@ def extract_tag_value(element: ET.Element, tag_candidates: List[str]) -> str:
 def find_comic_elements(root: ET.Element) -> List[ET.Element]:
     """
     Traverses XML tree to find elements representing individual comic book records.
+    Supports CLZ nested structure (<collectorz>...<comic>) and generic XML trees.
     """
+    # 1. Check for explicit CLZ/Collectorz XPath nodes (.//comic or .//comiclist/comic)
+    clz_nodes = root.findall(".//comiclist/comic") or root.findall(".//comic")
+    if clz_nodes:
+        return clz_nodes
+
+    # 2. Generic fallback scanner
     record_elements = []
 
     def is_leaf_container(elem: ET.Element) -> bool:
-        """Returns True if element's children are primitive leaf nodes (no nested complex children)."""
         if len(elem) == 0:
             return False
         for child in elem:
@@ -62,21 +72,17 @@ def find_comic_elements(root: ET.Element) -> List[ET.Element]:
                 return False
         return True
 
-    # Traverse all elements in tree
     for elem in root.iter():
         if elem == root:
             continue
         
-        # Check tag name or structure
         tag_lower = elem.tag.lower()
         if "}" in tag_lower:
             tag_lower = tag_lower.split("}", 1)[1]
 
-        # Explicit comic item tags or leaf containers matching fields
         known_record_tags = {"comic", "item", "book", "row", "comicbook", "entry", "record", "exportitem"}
         
         if tag_lower in known_record_tags or is_leaf_container(elem):
-            # Verify if element contains at least one comic-related field
             sample_val = extract_tag_value(elem, [
                 "title", "series", "seriesname", "booktitle", "issue", "issuenum", "issuenumber", "publisher"
             ])
@@ -84,6 +90,106 @@ def find_comic_elements(root: ET.Element) -> List[ET.Element]:
                 record_elements.append(elem)
 
     return record_elements
+
+
+def parse_single_comic_node(node: ET.Element) -> Dict[str, Any]:
+    """
+    Parses a single comic XML node supporting both CLZ nested schema and generic flat schema.
+    """
+    # --- CLZ Specific Field Extraction ---
+    # Series Name / Title: <mainsection><series><displayname> or <mainsection><title>
+    series_name = get_node_text(node, [
+        ".//mainsection/series/displayname",
+        "mainsection/series/displayname",
+        ".//series/displayname",
+        "series/displayname"
+    ])
+    
+    fallback_title = get_node_text(node, [
+        ".//mainsection/title",
+        "mainsection/title",
+        "title"
+    ]) or extract_tag_value(node, ["title", "series", "seriesname", "booktitle", "name"])
+
+    # Issue Number: <issuenr> (+ <issueext> if present)
+    issue_nr = get_node_text(node, [".//issuenr", "issuenr"]) or extract_tag_value(node, ["issue", "issuenum", "issuenumber", "number", "no"])
+    issue_ext = get_node_text(node, [".//issueext", "issueext"])
+    
+    if issue_nr and issue_ext:
+        issue = f"{issue_nr}{issue_ext}"
+    else:
+        issue = issue_nr
+
+    # Publisher: <publisher><displayname>
+    publisher = get_node_text(node, [
+        ".//publisher/displayname",
+        "publisher/displayname"
+    ]) or extract_tag_value(node, ["publisher", "pub", "publishername"])
+
+    # Purchase / Cover Price: <coverprice> or <price>
+    price_raw = get_node_text(node, [
+        ".//coverprice",
+        "coverprice"
+    ]) or extract_tag_value(node, ["price", "purchaseprice", "cost", "boughtprice", "buyprice"])
+    purchase_price = parse_currency(price_raw)
+
+    # Current Market Value: <currentprice> or <value>
+    value_raw = get_node_text(node, [
+        ".//currentprice",
+        "currentprice"
+    ]) or extract_tag_value(node, ["value", "currentvalue", "estvalue", "marketvalue", "estimatedvalue"])
+    market_value = parse_currency(value_raw)
+
+    # Condition / Grade: <grade><displayname> or <grade><rating> or <condition>
+    grade_str = get_node_text(node, [
+        ".//grade/displayname",
+        "grade/displayname",
+        ".//grade/rating",
+        "grade/rating"
+    ]) or extract_tag_value(node, ["condition", "grade", "format", "cgcgrade"]) or "Raw"
+
+    # Barcode: <barcode>
+    barcode = get_node_text(node, [".//barcode", "barcode"]) or extract_tag_value(node, ["barcode", "upc", "ean"]) or None
+
+    # Cover Image URL: <coverfrontdefault>
+    cover_url = get_node_text(node, [".//coverfrontdefault", "coverfrontdefault"]) or extract_tag_value(node, ["coverfrontdefault", "imageurl", "image", "cover"]) or None
+
+    # --- Title Construction ---
+    primary_series = series_name or fallback_title
+    if primary_series and issue:
+        issue_clean = issue.lstrip("#").strip()
+        if issue_clean and not (f"#{issue_clean}" in primary_series or primary_series.endswith(f" {issue_clean}")):
+            full_title = f"{primary_series} #{issue_clean}"
+        else:
+            full_title = primary_series
+    elif primary_series:
+        full_title = primary_series
+    elif publisher:
+        full_title = f"{publisher} Comic"
+    else:
+        full_title = "Untitled Comic"
+
+    metadata_json = {
+        "publisher": publisher or None,
+        "barcode": barcode or None,
+        "cover_url": cover_url or None,
+        "issue_number": issue or None,
+        "imported_via": "XML Bulk Import",
+        "raw_condition": grade_str
+    }
+
+    return {
+        "title": full_title,
+        "category": "comic",
+        "purchase_price": purchase_price,
+        "current_market_value": market_value,
+        "condition_grade": grade_str,
+        "publisher": publisher,
+        "issue": issue,
+        "barcode": barcode,
+        "image_url": cover_url,
+        "metadata_json": metadata_json
+    }
 
 
 def parse_comic_xml(xml_content: bytes | str) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -110,59 +216,8 @@ def parse_comic_xml(xml_content: bytes | str) -> Tuple[List[Dict[str, Any]], Lis
 
     for idx, node in enumerate(comic_nodes, start=1):
         try:
-            # 1. Title / Series Name: <title>, <Series>, <SeriesName>, <BookTitle>
-            title = extract_tag_value(node, ["title", "series", "seriesname", "booktitle", "name"])
-            
-            # 2. Issue Number: <issue>, <Issue>, <IssueNum>, <IssueNumber>
-            issue = extract_tag_value(node, ["issue", "issuenum", "issuenumber", "number", "no"])
-
-            # 3. Publisher: <publisher>, <Publisher>
-            publisher = extract_tag_value(node, ["publisher", "pub", "publishername"])
-
-            # 4. Purchase Price: <price>, <PurchasePrice>, <Cost>
-            price_raw = extract_tag_value(node, ["price", "purchaseprice", "cost", "boughtprice", "buyprice"])
-            purchase_price = parse_currency(price_raw)
-
-            # 5. Market Value: <value>, <CurrentValue>, <EstValue>
-            value_raw = extract_tag_value(node, ["value", "currentvalue", "estvalue", "marketvalue", "estimatedvalue"])
-            market_value = parse_currency(value_raw)
-
-            # 6. Condition/Grade: <condition>, <Grade>, <Format>
-            condition = extract_tag_value(node, ["condition", "grade", "format", "cgcgrade"]) or "Near Mint"
-
-            # Title normalization
-            if not title and publisher:
-                title = f"{publisher} Comic"
-            elif not title:
-                title = "Untitled Comic"
-
-            # Format title with issue number if issue exists and isn't already included in title
-            if issue:
-                issue_clean = issue.lstrip("#").strip()
-                if issue_clean and not (f"#{issue_clean}" in title or title.endswith(f" {issue_clean}")):
-                    full_title = f"{title} #{issue_clean}"
-                else:
-                    full_title = title
-            else:
-                full_title = title
-
-            metadata_json = {
-                "issue_number": issue or None,
-                "publisher": publisher or None,
-                "imported_via": "XML Bulk Import",
-                "raw_condition": condition
-            }
-
-            items.append({
-                "title": full_title,
-                "category": "comic",
-                "purchase_price": purchase_price,
-                "current_market_value": market_value,
-                "condition_grade": condition,
-                "publisher": publisher,
-                "issue": issue,
-                "metadata_json": metadata_json
-            })
+            parsed_item = parse_single_comic_node(node)
+            items.append(parsed_item)
         except Exception as err:
             errors.append(f"Row {idx}: Error parsing item record - {str(err)}")
 
@@ -197,14 +252,15 @@ def import_comics_from_xml(db: Session, xml_content: bytes | str) -> Dict[str, A
                 current_market_value=item_data["current_market_value"],
                 condition_grade=item_data["condition_grade"],
                 notes=notes_str,
+                barcode=item_data.get("barcode"),
+                image_url=item_data.get("image_url"),
                 metadata_json=item_data["metadata_json"],
                 created_at=now,
                 updated_at=now
             )
             db.add(collectible)
-            db.flush()  # Populates collectible.id
+            db.flush()
 
-            # Initial valuation history for items with market values
             if item_data["current_market_value"] > 0:
                 val_history = ValuationHistory(
                     item_id=collectible.id,

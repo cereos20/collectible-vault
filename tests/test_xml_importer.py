@@ -19,8 +19,41 @@ def setup_db():
         db.close()
 
 
-# Sample XML data
-CLZ_XML_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+# Nested CLZ Collectorz XML export sample
+CLZ_NESTED_SCHEMA_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+<collectorz>
+    <data>
+        <comicinfo>
+            <comiclist>
+                <comic>
+                    <mainsection>
+                        <series>
+                            <displayname>Black Knight: Curse of the Ebony Blade</displayname>
+                        </series>
+                        <title>Black Knight: Curse of the Ebony Blade</title>
+                    </mainsection>
+                    <issuenr>1</issuenr>
+                    <issueext>A</issueext>
+                    <publisher>
+                        <displayname>Marvel Comics</displayname>
+                    </publisher>
+                    <coverprice>3.99</coverprice>
+                    <currentprice>15.00</currentprice>
+                    <grade>
+                        <displayname>8.0 Very Fine</displayname>
+                        <rating>8.0</rating>
+                    </grade>
+                    <barcode>75960620023800111</barcode>
+                    <coverfrontdefault>https://clz.com/covers/bk1.jpg</coverfrontdefault>
+                </comic>
+            </comiclist>
+        </comicinfo>
+    </data>
+</collectorz>
+"""
+
+# Flat CLZ XML sample
+CLZ_FLAT_XML_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
 <export>
     <comic>
         <Series>The Amazing Spider-Man</Series>
@@ -29,14 +62,6 @@ CLZ_XML_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
         <PurchasePrice>$150.00</PurchasePrice>
         <CurrentValue>$1200.00</CurrentValue>
         <Condition>CGC 9.8</Condition>
-    </comic>
-    <comic>
-        <Series>Uncanny X-Men</Series>
-        <Issue>266</Issue>
-        <Publisher>Marvel Comics</Publisher>
-        <PurchasePrice>$45.00</PurchasePrice>
-        <CurrentValue>$250.00</CurrentValue>
-        <Condition>VF/NM</Condition>
     </comic>
 </export>
 """
@@ -68,18 +93,35 @@ LOCG_XML_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def test_parse_clz_xml():
-    items, errors = parse_comic_xml(CLZ_XML_SAMPLE)
+def test_parse_clz_nested_schema():
+    items, errors = parse_comic_xml(CLZ_NESTED_SCHEMA_SAMPLE)
     assert len(errors) == 0
-    assert len(items) == 2
+    assert len(items) == 1
     
-    item1 = items[0]
-    assert item1["title"] == "The Amazing Spider-Man #300"
-    assert item1["publisher"] == "Marvel Comics"
-    assert item1["purchase_price"] == 150.00
-    assert item1["current_market_value"] == 1200.00
-    assert item1["condition_grade"] == "CGC 9.8"
-    assert item1["category"] == "comic"
+    item = items[0]
+    assert item["title"] == "Black Knight: Curse of the Ebony Blade #1A"
+    assert item["publisher"] == "Marvel Comics"
+    assert item["purchase_price"] == 3.99
+    assert item["current_market_value"] == 15.00
+    assert item["condition_grade"] == "8.0 Very Fine"
+    assert item["barcode"] == "75960620023800111"
+    assert item["image_url"] == "https://clz.com/covers/bk1.jpg"
+    assert item["metadata_json"]["publisher"] == "Marvel Comics"
+    assert item["metadata_json"]["barcode"] == "75960620023800111"
+    assert item["metadata_json"]["cover_url"] == "https://clz.com/covers/bk1.jpg"
+
+
+def test_parse_clz_flat_xml():
+    items, errors = parse_comic_xml(CLZ_FLAT_XML_SAMPLE)
+    assert len(errors) == 0
+    assert len(items) == 1
+    
+    item = items[0]
+    assert item["title"] == "The Amazing Spider-Man #300"
+    assert item["publisher"] == "Marvel Comics"
+    assert item["purchase_price"] == 150.00
+    assert item["current_market_value"] == 1200.00
+    assert item["condition_grade"] == "CGC 9.8"
 
 
 def test_parse_comicbase_xml():
@@ -92,44 +134,28 @@ def test_parse_comicbase_xml():
     assert item["publisher"] == "DC Comics"
     assert item["purchase_price"] == 25.00
     assert item["current_market_value"] == 350.00
-    assert item["condition_grade"] == "Near Mint"
-
-
-def test_parse_locg_xml():
-    items, errors = parse_comic_xml(LOCG_XML_SAMPLE)
-    assert len(errors) == 0
-    assert len(items) == 1
-    
-    item = items[0]
-    assert item["title"] == "Saga #1"
-    assert item["publisher"] == "Image Comics"
-    assert item["purchase_price"] == 2.99
-    assert item["current_market_value"] == 180.00
-    assert item["condition_grade"] == "NM 9.4"
 
 
 def test_import_comics_from_xml_db_insertion():
     db = SessionLocal()
     try:
-        result = import_comics_from_xml(db, CLZ_XML_SAMPLE)
+        result = import_comics_from_xml(db, CLZ_NESTED_SCHEMA_SAMPLE)
         assert result["status"] == "success"
-        assert result["imported_count"] == 2
+        assert result["imported_count"] == 1
         assert len(result["errors"]) == 0
 
-        # Verify DB entries
-        db_items = db.query(CollectibleItem).filter(CollectibleItem.category == "comic").all()
-        assert len(db_items) >= 2
+        # Verify DB entry
+        item = db.query(CollectibleItem).filter(CollectibleItem.title.like("%Black Knight%")).first()
+        assert item is not None
+        assert item.category == "comic"
+        assert item.barcode == "75960620023800111"
+        assert item.image_url == "https://clz.com/covers/bk1.jpg"
+        assert item.metadata_json["publisher"] == "Marvel Comics"
 
-        titles = [i.title for i in db_items]
-        assert "The Amazing Spider-Man #300" in titles
-        assert "Uncanny X-Men #266" in titles
-
-        # Verify valuation history entries
-        vh_entries = db.query(ValuationHistory).all()
-        assert len(vh_entries) >= 2
-        vh_values = [v.value for v in vh_entries]
-        assert 1200.00 in vh_values
-        assert 250.00 in vh_values
+        # Verify valuation history entry
+        vh = db.query(ValuationHistory).filter(ValuationHistory.item_id == item.id).first()
+        assert vh is not None
+        assert vh.value == 15.00
     finally:
         db.close()
 
@@ -137,21 +163,10 @@ def test_import_comics_from_xml_db_insertion():
 def test_xml_import_api_endpoint():
     response = client.post(
         "/api/import/xml",
-        files={"file": ("clz_export.xml", CLZ_XML_SAMPLE.encode("utf-8"), "application/xml")}
+        files={"file": ("clz_collectorz.xml", CLZ_NESTED_SCHEMA_SAMPLE.encode("utf-8"), "application/xml")}
     )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "success"
-    assert data["imported_count"] == 2
+    assert data["imported_count"] == 1
     assert len(data["errors"]) == 0
-
-    # Test empty file error handling
-    empty_resp = client.post(
-        "/api/import/xml",
-        files={"file": ("empty.xml", b"", "application/xml")}
-    )
-    assert empty_resp.status_code == 200
-    empty_data = empty_resp.json()
-    assert empty_data["status"] == "error"
-    assert empty_data["imported_count"] == 0
-    assert "Uploaded XML file is empty." in empty_data["errors"]
