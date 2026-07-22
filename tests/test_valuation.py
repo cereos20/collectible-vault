@@ -43,21 +43,38 @@ def test_filter_outliers_iqr():
 
 
 def test_calculate_comp_fmv_uses_median():
-    # Comps: [10, 12, 14, 16, 100] -> outlier 100 removed -> comps [10, 12, 14, 16] -> median 13.0
     comp_prices = [10.0, 12.0, 14.0, 16.0, 100.0]
     fmv = calculate_comp_fmv(comp_prices, category="comic", condition_grade="Near Mint", current_val=15.0)
     assert fmv == 13.0
 
 
-def test_calculate_comp_fmv_zero_comps_returns_none():
+def test_calculate_comp_fmv_zero_comps_returns_zero():
     fmv = calculate_comp_fmv([], category="comic", condition_grade="Near Mint", current_val=25.0)
-    assert fmv is None
+    assert fmv == 0.0
 
 
-def test_fetch_ebay_sold_comps_retains_existing_value_on_zero_comps():
-    # When current value is $12.50, ensure valuation does not cluster around mock $57-$58
-    fmv = fetch_ebay_sold_comps("Obscure Title #99", "comic", 12.50, "Raw Near Mint")
-    assert isinstance(fmv, float)
-    # Price should be close to 12.50 (retained or simulated around 12.50), not $57-$58
-    assert 10.0 <= fmv <= 15.0
-    assert fmv != 57.50
+def test_fetch_ebay_sold_comps_zero_comps_strict_zero_fallback(capsys):
+    # When 0 comp sales are found, setting market_value = $0.00 strictly
+    fmv = fetch_ebay_sold_comps("Obscure Unknown Title #999", "comic", 12.50, "Raw Near Mint")
+    assert fmv == 0.0
+
+    captured = capsys.readouterr()
+    assert "[VALUATION NO COMPS] Item: Obscure Unknown Title #999 | Setting market_value = $0.00" in captured.out
+
+
+def test_fetch_ebay_sold_comps_upc_priority(capsys):
+    # Valid barcode "074470123456" uses UPC method priority
+    fmv = fetch_ebay_sold_comps("Uncanny X-Men #266", "comic", 0.0, "CGC 9.4", barcode="074470123456")
+    assert fmv == 240.00
+
+    captured = capsys.readouterr()
+    assert "[VALUATION SUCCESS] Item: Uncanny X-Men #266 | Method: UPC" in captured.out
+
+
+def test_fetch_ebay_sold_comps_title_fallback(capsys):
+    # Title "The Amazing Spider-Man #300" falls back to Title method when no UPC barcode provided
+    fmv = fetch_ebay_sold_comps("The Amazing Spider-Man #300", "comic", 0.0, "CGC 9.6")
+    assert fmv == 650.00
+
+    captured = capsys.readouterr()
+    assert "[VALUATION SUCCESS] Item: The Amazing Spider-Man #300 | Method: Title" in captured.out
