@@ -377,6 +377,8 @@ h1, h2, h3, h4, .brand-text {
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .meta-tag {
@@ -385,6 +387,13 @@ h1, h2, h3, h4, .brand-text {
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-muted);
+  max-width: 100%;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
 }
 
 .financial-row {

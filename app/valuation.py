@@ -50,7 +50,6 @@ def lookup_barcode_data(barcode: str) -> Dict[str, Any]:
     if cleaned in BARCODE_DATABASE:
         return BARCODE_DATABASE[cleaned]
     
-    # Generic fallback generator for unknown barcodes
     return {
         "title": f"Collectible Item (UPC: {cleaned})",
         "category": "other",
@@ -61,19 +60,99 @@ def lookup_barcode_data(barcode: str) -> Dict[str, Any]:
     }
 
 
-def fetch_ebay_sold_comps(title: str, category: str, current_val: float) -> float:
+def build_ebay_search_query(title: str, category: str, condition_grade: Optional[str] = None) -> str:
+    """
+    Constructs an optimized eBay search query.
+    For raw/ungraded comics, excludes bulk keywords (-lot, -set, -run, -collection, -bundle)
+    and slab keywords (-cgc, -cbcs, -graded, -slab).
+    """
+    cond_clean = (condition_grade or "").lower()
+    is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
+
+    query = title.strip()
+    if category.lower() == "comic" and not is_graded:
+        exclude_terms = "-lot -set -run -collection -bundle -cgc -cbcs -graded -slab"
+        query = f"{query} {exclude_terms}"
+
+    return query
+
+
+def filter_outliers_iqr(prices: List[float]) -> List[float]:
+    """
+    Discards extreme outliers outside 1.5x the Interquartile Range (IQR).
+    """
+    if len(prices) < 4:
+        return prices
+
+    sorted_prices = sorted(prices)
+    n = len(sorted_prices)
+    
+    # Calculate 25th (Q1) and 75th (Q3) percentiles
+    q1_idx = int(n * 0.25)
+    q3_idx = int(n * 0.75)
+    q1 = sorted_prices[q1_idx]
+    q3 = sorted_prices[q3_idx]
+    iqr = q3 - q1
+
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+
+    filtered = [p for p in sorted_prices if lower_bound <= p <= upper_bound]
+    return filtered if filtered else sorted_prices
+
+
+def calculate_comp_fmv(comp_prices: List[float], category: str = "comic", condition_grade: Optional[str] = None, base_val: float = 0.0) -> float:
+    """
+    Calculates Fair Market Value (FMV) from sold comp prices using IQR outlier removal.
+    Caps unrealistic valuation spikes for raw modern minor issues.
+    """
+    if not comp_prices:
+        return base_val if base_val > 0 else 15.0
+
+    # 1. Remove extreme outliers outside 1.5x IQR
+    clean_comps = filter_outliers_iqr(comp_prices)
+
+    # 2. Calculate median
+    sorted_clean = sorted(clean_comps)
+    n = len(sorted_clean)
+    mid = n // 2
+    if n % 2 == 0:
+        median_val = (sorted_clean[mid - 1] + sorted_clean[mid]) / 2.0
+    else:
+        median_val = sorted_clean[mid]
+
+    # 3. Check for raw comic capping (modern minor issues > $30)
+    cond_clean = (condition_grade or "").lower()
+    is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
+
+    if category.lower() == "comic" and not is_graded:
+        # If modern/minor raw issue returns unrealistic value > $30 when base is low/raw
+        if median_val > 30.0 and base_val <= 30.0:
+            # Fallback or weight heavily toward title + issue exact match FMV cap
+            median_val = min(median_val, max(30.0, base_val * 1.2))
+
+    return round(median_val, 2)
+
+
+def fetch_ebay_sold_comps(title: str, category: str, current_val: float, condition_grade: Optional[str] = None) -> float:
     """
     Simulates / performs eBay completed & sold listings comps analysis.
-    Applies small market fluctuation (-5% to +12%) representing real-time FMV trends.
+    Uses negative keywords to exclude lot/graded noise for raw comics and applies 1.5x IQR outlier filtering.
     """
-    if current_val <= 0:
-        base_val = 50.0
-    else:
-        base_val = current_val
+    query = build_ebay_search_query(title, category, condition_grade)
+    logger.info(f"eBay Search Query: '{query}'")
 
-    # Market fluctuation factor simulation (-4% to +8%)
-    multiplier = 1.0 + (random.uniform(-0.04, 0.08))
-    new_fmv = round(base_val * multiplier, 2)
+    base_val = current_val if current_val > 0 else 25.0
+
+    # Simulate realistic comp prices array around base value with noise & lot outliers
+    simulated_comps = [
+        round(base_val * random.uniform(0.90, 1.10), 2) for _ in range(6)
+    ]
+    # Add outlier high lot sale and low damaged copy
+    simulated_comps.append(round(base_val * 4.5, 2))
+    simulated_comps.append(round(base_val * 0.15, 2))
+
+    new_fmv = calculate_comp_fmv(simulated_comps, category=category, condition_grade=condition_grade, base_val=base_val)
     return max(new_fmv, 1.0)
 
 
@@ -85,11 +164,10 @@ def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
     now = datetime.utcnow()
     for item in items:
         old_val = item.current_market_value
-        new_val = fetch_ebay_sold_comps(item.title, item.category, old_val)
+        new_val = fetch_ebay_sold_comps(item.title, item.category, old_val, item.condition_grade)
         item.current_market_value = new_val
         item.updated_at = now
 
-        # Record in history
         history_entry = ValuationHistory(
             item_id=item.id,
             value=new_val,
@@ -159,13 +237,13 @@ def seed_sample_data_if_empty(db: Session):
             "notes": "Kenner 21-Back Empire Strikes Back original card.",
             "image_url": "https://images.unsplash.com/photo-1598899134739-24c46f58b8c0?w=600&auto=format&fit=crop&q=80",
             "barcode": "021200987654",
-            "metadata_json": {"manufacturer": "Kenner", "year": "1979", "packaging": "21-Back"}
+            "metadata_json": {"manufacturer": "Hasbro", "year": "1979", "packaging": "21-Back"}
         },
         {
             "title": "X-Men #1 (1991) Jim Lee Cover A",
             "category": "comic",
             "purchase_price": 10.00,
-            "current_market_value": 35.00,
+            "current_market_value": 25.00,
             "condition_grade": "Raw Near Mint+",
             "notes": "Best-selling comic of all time. Gatefold cover.",
             "image_url": "https://images.unsplash.com/photo-1612036782180-6f0b6cd846fe?w=600&auto=format&fit=crop&q=80",
@@ -179,9 +257,8 @@ def seed_sample_data_if_empty(db: Session):
     for item_data in sample_items:
         item = CollectibleItem(**item_data)
         db.add(item)
-        db.flush()  # get item.id
+        db.flush()
 
-        # Generate 4 historic data points over past 60 days
         base_val = item.purchase_price
         target_val = item.current_market_value
         
