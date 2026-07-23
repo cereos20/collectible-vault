@@ -162,9 +162,12 @@ async function loadCollectibles() {
 }
 
 function renderCollectibleCard(item) {
-    const defaultImg = '/static/images/placeholder.png';
-    const rawUrl = item.image_url || item.cover_url;
-    const imgUrl = rawUrl ? rawUrl : defaultImg;
+    const catFallback = `/static/images/badges/${item.category || 'other'}.svg`;
+    let rawUrl = item.image_url || item.cover_url;
+    if (rawUrl && (rawUrl.startsWith('blob:') || rawUrl === 'null' || rawUrl === 'undefined')) {
+        rawUrl = catFallback;
+    }
+    const imgUrl = rawUrl ? rawUrl : catFallback;
     const catClass = `cat-${item.category}`;
 
     const profitSign = item.profit_loss >= 0 ? '+' : '';
@@ -184,7 +187,7 @@ function renderCollectibleCard(item) {
     return `
     <div class="collectible-card glass-panel" id="card-${item.id}">
         <div class="card-image-wrap">
-            <img src="${imgUrl}" onerror="this.onerror=null; this.src='/static/images/badges/${item.category || 'other'}.svg'; this.classList.add('img-fallback');" alt="${escapeHtml(item.title)}" loading="lazy">
+            <img src="${imgUrl}" onerror="this.onerror=null; this.src='/static/images/badges/other.svg'; this.classList.add('img-fallback');" alt="${escapeHtml(item.title)}" loading="lazy">
             <span class="category-badge ${catClass}">${item.category.replace('_', ' ')}</span>
             ${item.condition_grade ? `<span class="grade-badge">${escapeHtml(item.condition_grade)}</span>` : ''}
         </div>
@@ -349,7 +352,7 @@ async function handleVisionFileUpload(e) {
             current_market_value: result.estimated_market_value,
             condition_grade: result.condition_estimate,
             confidence: result.confidence_score,
-            image_url: URL.createObjectURL(file),
+            image_url: result.image_url || `/static/images/badges/${result.category || 'other'}.svg`,
             metadata: result.extracted_metadata,
             summary: result.summary
         });
@@ -375,8 +378,10 @@ function openPreflightModal(data) {
     document.getElementById('confidenceScore').innerText = `${Math.round((data.confidence || 0.9) * 100)}% Match`;
     
     const previewImg = document.getElementById('preflightImagePreview');
-    if (previewImg && data.image_url) {
-        previewImg.src = data.image_url;
+    if (previewImg) {
+        let previewSrc = data.image_url || '/static/images/badges/other.svg';
+        if (previewSrc.startsWith('blob:')) previewSrc = '/static/images/badges/other.svg';
+        previewImg.src = previewSrc;
     }
 
     openModal('preflightModal');
