@@ -13,15 +13,16 @@ def test_assistant_chat_endpoint_empty_prompt():
     assert res.status_code == 400
 
 
-@pytest.mark.asyncio
-async def test_query_vault_assistant_service():
+import asyncio
+
+def test_query_vault_assistant_service():
     db = SessionLocal()
     try:
-        result = await query_vault_assistant(
+        result = asyncio.run(query_vault_assistant(
             user_prompt="What are my top Spider-Man comics?",
             selected_model="qwen2-vl",
             db=db
-        )
+        ))
         assert result["status"] in ["success", "fallback"]
         assert "response" in result
         assert len(result["response"]) > 0
