@@ -31,3 +31,14 @@ def test_select_llm_model_endpoint():
 
     # Reset back to default for other tests
     set_active_model("qwen2-vl")
+
+
+import asyncio
+from app.services.llm import check_ollama_status, set_ollama_host
+
+def test_check_ollama_status_caching():
+    set_ollama_host("http://localhost:11434")
+    res1 = asyncio.run(check_ollama_status())
+    res2 = asyncio.run(check_ollama_status())
+    assert res1 == res2
+

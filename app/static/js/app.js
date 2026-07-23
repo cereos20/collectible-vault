@@ -9,10 +9,13 @@ let valuationChart = null;
 
 function initApp() {
     fetchDashboardStats();
-    fetchPortfolioInsights();
     loadCollectibles();
     fetchLlmStatus();
     setupEventListeners();
+    // Defer portfolio-insights execution to run EXACTLY ONCE on initial page load
+    setTimeout(() => {
+        fetchPortfolioInsights();
+    }, 300);
 }
 
 function setupEventListeners() {
@@ -582,50 +585,56 @@ window.loadItems = loadItems;
 // --- OLLAMA LLM HEALTH & DYNAMIC MODEL SELECTOR ---
 let currentLlmStatusData = null;
 
-async function fetchLlmStatus() {
+async function fetchLlmStatus(force = false) {
+    if (!force && currentLlmStatusData) {
+        renderLlmStatusUi(currentLlmStatusData);
+        return;
+    }
     try {
         const res = await fetch('/api/llm/status');
         if (!res.ok) return;
         const data = await res.json();
         currentLlmStatusData = data;
-
-        const badge = document.getElementById('llmBadge');
-        const textEl = document.getElementById('llmStatusText');
-        const selectEl = document.getElementById('llmModelSelect');
-
-        if (data.status === 'online') {
-            if (badge) {
-                badge.className = 'llm-badge online';
-                badge.title = `Connected to Ollama host at ${data.host}`;
-            }
-            if (textEl) {
-                textEl.innerHTML = `<i class="fas fa-circle status-dot"></i> LLM: Connected (${escapeHtml(data.active_model)})`;
-            }
-        } else {
-            if (badge) {
-                badge.className = 'llm-badge offline';
-                badge.title = data.troubleshooting || 'Ollama offline';
-            }
-            if (textEl) {
-                textEl.innerHTML = `<i class="fas fa-circle status-dot"></i> LLM: Offline (${escapeHtml(data.active_model)})`;
-            }
-        }
-
-        // Populate model dropdown selector with full tag names
-        if (selectEl && data.models && data.models.length > 0) {
-            const activeModel = data.active_model || '';
-            let matchedActive = data.models.find(m => m === activeModel) ||
-                                data.models.find(m => m.startsWith(activeModel + ':')) ||
-                                data.models.find(m => m.startsWith(activeModel)) ||
-                                data.models[0];
-
-            selectEl.innerHTML = data.models.map(m => {
-                const isSel = (m === matchedActive) ? 'selected' : '';
-                return `<option value="${escapeHtml(m)}" ${isSel}>${escapeHtml(m)}</option>`;
-            }).join('');
-        }
+        renderLlmStatusUi(data);
     } catch (err) {
         console.error('Error fetching LLM health status:', err);
+    }
+}
+
+function renderLlmStatusUi(data) {
+    const badge = document.getElementById('llmBadge');
+    const textEl = document.getElementById('llmStatusText');
+    const selectEl = document.getElementById('llmModelSelect');
+
+    if (data.status === 'online') {
+        if (badge) {
+            badge.className = 'llm-badge online';
+            badge.title = `Connected to Ollama host at ${data.host}`;
+        }
+        if (textEl) {
+            textEl.innerHTML = `<i class="fas fa-circle status-dot"></i> LLM: Connected (${escapeHtml(data.active_model)})`;
+        }
+    } else {
+        if (badge) {
+            badge.className = 'llm-badge offline';
+            badge.title = data.troubleshooting || 'Ollama offline';
+        }
+        if (textEl) {
+            textEl.innerHTML = `<i class="fas fa-circle status-dot"></i> LLM: Offline (${escapeHtml(data.active_model)})`;
+        }
+    }
+
+    if (selectEl && data.models && data.models.length > 0) {
+        const activeModel = data.active_model || '';
+        let matchedActive = data.models.find(m => m === activeModel) ||
+                            data.models.find(m => m.startsWith(activeModel + ':')) ||
+                            data.models.find(m => m.startsWith(activeModel)) ||
+                            data.models[0];
+
+        selectEl.innerHTML = data.models.map(m => {
+            const isSel = (m === matchedActive) ? 'selected' : '';
+            return `<option value="${escapeHtml(m)}" ${isSel}>${escapeHtml(m)}</option>`;
+        }).join('');
     }
 }
 
@@ -1005,27 +1014,55 @@ async function saveOllamaHostSetting() {
 
 
 // --- SMART PORTFOLIO INSIGHTS & MARKET BRIEFING ---
-async function fetchPortfolioInsights() {
+let isPortfolioInsightsFetching = false;
+let lastPortfolioInsightsFetchTime = 0;
+let portfolioInsightsCached = false;
+
+async function fetchPortfolioInsights(force = false) {
+    const now = Date.now();
+
+    // 3-second lock / debounce: prevent redundant parallel executions
+    if (isPortfolioInsightsFetching) return;
+    if (!force && (portfolioInsightsCached || (now - lastPortfolioInsightsFetchTime < 3000))) return;
+
     const banner = document.getElementById('portfolioInsightsBanner');
     const headline = document.getElementById('portfolioInsightHeadline');
     const body = document.getElementById('portfolioInsightBody');
+
+    // Render non-blocking skeleton loader in banner while waiting
+    if (banner) banner.style.display = 'block';
+    if (headline) headline.innerText = 'AI Portfolio Insight';
+    if (body) {
+        body.innerHTML = `
+            <div style="display:flex; align-items:center; gap:0.5rem; color:var(--text-muted);">
+                <i class="fas fa-spinner fa-spin"></i> Analyzing vault asset distribution & market comps...
+            </div>`;
+    }
+
+    isPortfolioInsightsFetching = true;
+    lastPortfolioInsightsFetchTime = Date.now();
 
     try {
         const res = await fetch('/api/assistant/portfolio-insights');
         if (res.ok) {
             const data = await res.json();
             if (data.status === 'success') {
+                portfolioInsightsCached = true;
                 if (headline) headline.innerText = data.headline || 'Portfolio Insight';
                 if (body) {
                     const insightsList = (data.insights || []).map(i => `• ${escapeHtml(i)}`).join('<br>');
                     const adviceText = data.advice ? `<div style="margin-top:0.4rem; color:var(--text-light); font-weight:600;"><i class="fas fa-compass"></i> ${escapeHtml(data.advice)}</div>` : '';
                     body.innerHTML = `${insightsList}${adviceText}`;
                 }
-                if (banner) banner.style.display = 'block';
             }
         }
     } catch (err) {
         console.error('Failed to fetch portfolio insights:', err);
+        if (body) {
+            body.innerHTML = `<span style="color:var(--text-muted);">Insights service temporarily unavailable.</span>`;
+        }
+    } finally {
+        isPortfolioInsightsFetching = false;
     }
 }
 

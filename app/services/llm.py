@@ -1,3 +1,4 @@
+import time
 import os
 import httpx
 import logging
@@ -10,6 +11,11 @@ _ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2-vl")
 _active_model: str = DEFAULT_MODEL
 
+# In-memory status cache to prevent log spam and socket exhaustion
+_status_cache: Dict[str, Any] = {}
+_status_cache_time: float = 0.0
+CACHE_TTL_SECONDS: float = 5.0
+
 
 def get_ollama_host() -> str:
     """Returns the currently configured Ollama base host URL (without trailing slash)."""
@@ -18,13 +24,14 @@ def get_ollama_host() -> str:
 
 
 def set_ollama_host(host_url: str) -> str:
-    """Updates the configured Ollama base host URL."""
-    global _ollama_host
+    """Updates the configured Ollama base host URL and invalidates status cache."""
+    global _ollama_host, _status_cache_time
     if host_url and host_url.strip():
         clean_url = host_url.strip().rstrip("/")
         if not clean_url.startswith("http://") and not clean_url.startswith("https://"):
             clean_url = f"http://{clean_url}"
         _ollama_host = clean_url
+        _status_cache_time = 0.0  # Invalidate status cache on setting update
         logger.info(f"Configured Ollama Host updated to: {_ollama_host}")
     return get_ollama_host()
 
@@ -37,18 +44,25 @@ def get_active_model() -> str:
 
 def set_active_model(model_name: str) -> str:
     """Updates the active LLM model preference."""
-    global _active_model
+    global _active_model, _status_cache_time
     if model_name and model_name.strip():
         _active_model = model_name.strip()
+        _status_cache_time = 0.0  # Invalidate status cache on model update
         logger.info(f"Active LLM model changed to: {_active_model}")
     return _active_model
 
 
-async def check_ollama_status() -> Dict[str, Any]:
+async def check_ollama_status(force: bool = False) -> Dict[str, Any]:
     """
     Pings {get_ollama_host()}/api/tags with a 3-second timeout.
-    Returns status ('online' | 'offline'), active model, and list of installed full tag model names.
+    Caches health check results for 5.0 seconds to eliminate redundant socket connections and log spam.
     """
+    global _status_cache, _status_cache_time
+    now = time.time()
+
+    if not force and _status_cache and (now - _status_cache_time < CACHE_TTL_SECONDS):
+        return _status_cache
+
     host = get_ollama_host()
     url = f"{host}/api/tags"
     current_model = get_active_model()
@@ -71,19 +85,25 @@ async def check_ollama_status() -> Dict[str, Any]:
                 if not models_list:
                     models_list = [current_model, "qwen2-vl:latest", "gemma4:12b-it-q4", "llama3:8b"]
 
-                return {
+                result = {
                     "status": "online",
                     "active_model": current_model,
                     "models": models_list,
                     "host": host
                 }
+                _status_cache = result
+                _status_cache_time = now
+                return result
     except Exception as e:
         logger.warning(f"Ollama health check failed for host '{host}': {e}")
 
-    return {
+    result = {
         "status": "offline",
         "active_model": current_model,
         "models": [current_model, "qwen2-vl:latest", "gemma4:12b-it-q4"],
         "host": host,
         "troubleshooting": "Check OLLAMA_HOST IP or OLLAMA_ORIGINS cors settings on Windows VM."
     }
+    _status_cache = result
+    _status_cache_time = now
+    return result
