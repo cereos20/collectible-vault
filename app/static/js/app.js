@@ -604,10 +604,16 @@ async function fetchLlmStatus() {
             }
         }
 
-        // Populate model dropdown selector
+        // Populate model dropdown selector with full tag names
         if (selectEl && data.models && data.models.length > 0) {
+            const activeModel = data.active_model || '';
+            let matchedActive = data.models.find(m => m === activeModel) ||
+                                data.models.find(m => m.startsWith(activeModel + ':')) ||
+                                data.models.find(m => m.startsWith(activeModel)) ||
+                                data.models[0];
+
             selectEl.innerHTML = data.models.map(m => {
-                const isSel = (m === data.active_model) ? 'selected' : '';
+                const isSel = (m === matchedActive) ? 'selected' : '';
                 return `<option value="${escapeHtml(m)}" ${isSel}>${escapeHtml(m)}</option>`;
             }).join('');
         }

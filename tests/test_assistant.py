@@ -64,3 +64,21 @@ def test_manual_key_issue_override():
     updated_data = update_res.json()
     assert updated_data["is_key_issue"] is True
     assert updated_data["key_reasons"] == "Manual Collector Custom Key Override"
+
+
+from app.services.llm_assistant import normalize_model_tag
+
+def test_normalize_model_tag_exact_match():
+    installed = ["gemma4:12b-it-q4", "qwen2-vl:latest", "llama3:8b"]
+    assert normalize_model_tag("gemma4:12b-it-q4", installed) == "gemma4:12b-it-q4"
+
+def test_normalize_model_tag_prefix_match():
+    installed = ["gemma4:12b-it-q4", "qwen2-vl:latest", "llama3:8b"]
+    assert normalize_model_tag("gemma4", installed) == "gemma4:12b-it-q4"
+    assert normalize_model_tag("llama3", installed) == "llama3:8b"
+
+def test_normalize_model_tag_fallback():
+    installed = ["gemma4:12b-it-q4", "qwen2-vl:latest"]
+    assert normalize_model_tag("nonexistent_model", installed) == "gemma4:12b-it-q4"
+    assert normalize_model_tag("custom", []) == "custom"
+

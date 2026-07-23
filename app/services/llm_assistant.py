@@ -1,7 +1,7 @@
 import os
 import httpx
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from app.models import CollectibleItem
@@ -15,6 +15,62 @@ Do NOT output raw context stats unless the user specifically requests numbers or
 Keep answers concise, friendly, and focused on what the user asked.
 If the user asks about specific items, reference them by name, value, and key status from the context.
 Format currency values with $ signs and two decimal places."""
+
+
+async def fetch_installed_models() -> List[str]:
+    """
+    Fetches the list of installed model tag names from Ollama via GET /api/tags.
+    Returns list of model names like ['gemma4:12b-it-q4', 'qwen2-vl:latest', 'llama3:8b'].
+    """
+    url = f"{OLLAMA_HOST}/api/tags"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_models = data.get("models", [])
+                models_list: List[str] = []
+                for m in raw_models:
+                    name = m.get("name") or m.get("model")
+                    if name:
+                        models_list.append(name)
+                return models_list
+    except Exception as e:
+        logger.warning(f"Could not fetch installed model tags from Ollama ({url}): {e}")
+    return []
+
+
+def normalize_model_tag(requested_model: str, installed_models: List[str]) -> str:
+    """
+    Normalizes a requested model name against Ollama's list of installed model tags:
+    1. Exact match if installed_models contains requested_model.
+    2. Prefix matching if requested_model is e.g. "gemma4" matching "gemma4:12b-it-q4".
+    3. Fallback to the first available installed model if no match found.
+    4. Return requested_model if installed_models is empty.
+    """
+    if not requested_model or not requested_model.strip():
+        requested_model = get_active_model()
+
+    req = requested_model.strip()
+    if not installed_models:
+        return req
+
+    # 1. Exact match
+    if req in installed_models:
+        return req
+
+    # 2. Prefix matching (e.g., 'gemma4' -> 'gemma4:12b-it-q4')
+    prefix_colon = f"{req}:"
+    for tag in installed_models:
+        if tag.startswith(prefix_colon) or tag == req:
+            return tag
+
+    for tag in installed_models:
+        if tag.startswith(req):
+            return tag
+
+    # 3. Fallback to first available installed model tag
+    return installed_models[0]
 
 
 def _build_vault_context(db: Optional[Session]) -> Dict[str, Any]:
@@ -125,10 +181,18 @@ async def query_vault_assistant(
     db: Optional[Session] = None
 ) -> Dict[str, Any]:
     """
-    Constructs portfolio context from vault.db, sends a formatted prompt to Ollama,
-    and returns Ollama's conversational response. Falls back gracefully if offline.
+    Constructs portfolio context from vault.db, normalizes target model against installed Ollama models,
+    sends a formatted prompt to Ollama, and returns Ollama's conversational response.
+    Falls back gracefully if offline.
     """
-    model = (selected_model or get_active_model()).strip()
+    raw_requested_model = (selected_model or get_active_model()).strip()
+
+    # 1. Fetch installed model tags from Ollama GET /api/tags
+    installed_models = await fetch_installed_models()
+
+    # 2. Normalize requested model against installed tags
+    target_model = normalize_model_tag(raw_requested_model, installed_models)
+
     ctx = _build_vault_context(db)
     full_prompt = _format_full_prompt(user_prompt, ctx)
 
@@ -138,10 +202,10 @@ async def query_vault_assistant(
         "key_issues_count": ctx["key_count"]
     }
 
-    # Attempt Ollama API call
+    # Attempt Ollama API call with normalized model tag
     url = f"{OLLAMA_HOST}/api/generate"
     payload = {
-        "model": model,
+        "model": target_model,
         "prompt": full_prompt,
         "stream": False
     }
@@ -156,7 +220,7 @@ async def query_vault_assistant(
                     return {
                         "status": "success",
                         "response": assistant_text,
-                        "model_used": model,
+                        "model_used": target_model,
                         "context": context_summary
                     }
                 else:
@@ -172,6 +236,6 @@ async def query_vault_assistant(
     return {
         "status": "fallback",
         "response": fallback_text,
-        "model_used": f"{model} (Offline — Local Fallback)",
+        "model_used": f"{target_model} (Offline — Local Fallback)",
         "context": context_summary
     }
