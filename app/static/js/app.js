@@ -7,6 +7,55 @@ let currentCategory = 'all';
 let searchTimeout = null;
 let valuationChart = null;
 
+// Batch rendering & infinite scroll state
+let allLoadedItems = [];
+let currentRenderIndex = 0;
+const BATCH_SIZE = 36;
+let cardObserver = null;
+
+function renderNextBatch() {
+    const grid = document.getElementById('collectiblesGrid');
+    if (!grid || currentRenderIndex >= allLoadedItems.length) return;
+
+    // Remove old sentinel if present
+    const oldSentinel = document.getElementById('collectiblesGridSentinel');
+    if (oldSentinel) oldSentinel.remove();
+
+    const batch = allLoadedItems.slice(currentRenderIndex, currentRenderIndex + BATCH_SIZE);
+    const fragment = document.createDocumentFragment();
+
+    batch.forEach(item => {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = renderCollectibleCard(item).trim();
+        const cardNode = tempDiv.firstElementChild;
+        if (cardNode) {
+            fragment.appendChild(cardNode);
+        }
+    });
+
+    grid.appendChild(fragment);
+    currentRenderIndex += batch.length;
+
+    // Attach infinite scroll sentinel if more items remain
+    if (currentRenderIndex < allLoadedItems.length) {
+        const sentinel = document.createElement('div');
+        sentinel.id = 'collectiblesGridSentinel';
+        sentinel.style.cssText = 'grid-column: 1/-1; text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.95rem; font-weight: 500;';
+        sentinel.innerHTML = `<i class="fas fa-spinner fa-spin" style="margin-right: 0.5rem;"></i> Loading more collectibles (${currentRenderIndex} of ${allLoadedItems.length})...`;
+        grid.appendChild(sentinel);
+
+        if (!cardObserver) {
+            cardObserver = new IntersectionObserver((entries) => {
+                if (entries[0].isIntersecting) {
+                    renderNextBatch();
+                }
+            }, { rootMargin: '350px' });
+        }
+        cardObserver.disconnect();
+        cardObserver.observe(sentinel);
+    }
+}
+
 function initApp() {
     fetchDashboardStats();
     loadCollectibles();
@@ -149,10 +198,17 @@ async function loadCollectibles() {
                 <h3>No Collectibles Found</h3>
                 <p>Use "+ Snap & Add Collectible" to add comics, Funko Pops, figures, or cards.</p>
             </div>`;
+            allLoadedItems = [];
+            currentRenderIndex = 0;
             return;
         }
 
-        grid.innerHTML = items.map(item => renderCollectibleCard(item)).join('');
+        allLoadedItems = items;
+        currentRenderIndex = 0;
+        grid.innerHTML = ''; // Clear spinner
+
+        // Render first batch immediately
+        renderNextBatch();
     } catch (err) {
         console.error('Error loading items:', err);
         grid.innerHTML = `<div style="grid-column: 1/-1; text-align:center; padding:2rem; color:var(--accent-rose);">
