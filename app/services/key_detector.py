@@ -33,8 +33,9 @@ def detect_key_issue(title: str, notes: Optional[str] = None) -> Tuple[bool, Opt
         if re.search(pattern, text, flags=re.IGNORECASE):
             return True, reason
 
+    # Order from longest to shortest to ensure specific key phrases take precedence
     generic_keywords = [
-        "1st app", "first app", "first appearance", "1st appearance",
+        "first appearance", "1st appearance", "first app", "1st app",
         "origin of", "key issue", "iconic cover", "death of"
     ]
     for kw in generic_keywords:
