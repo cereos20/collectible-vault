@@ -3,6 +3,7 @@ import re
 import time
 import base64
 import random
+import math
 import logging
 import requests
 import statistics
@@ -237,15 +238,96 @@ def lookup_barcode_data(barcode: str) -> Dict[str, Any]:
     }
 
 
+def sanitize_and_disambiguate_query(
+    title: str,
+    category: str = "comic",
+    issue_number: Optional[str] = None,
+    condition_grade: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Normalizes item titles, resolves ultra-short title ambiguity, constructs
+    strict category-locked search strings, and appends negative keywords for eBay API V2.
+    """
+    clean_title = title or ""
+    
+    # Strip leading "The ", volume numbers, and parenthetical metadata
+    clean_title = re.sub(r"^The\s+", "", clean_title, flags=re.IGNORECASE)
+    clean_title = re.sub(r",?\s*vol\.?\s*\d+", "", clean_title, flags=re.IGNORECASE)
+    clean_title = re.sub(r"\(.*?\)", "", clean_title)
+    clean_title = re.sub(r"[/:,#\"']", " ", clean_title)
+    clean_title = re.sub(r"\s+", " ", clean_title).strip()
+
+    # Extract issue number if embedded in title
+    issue = issue_number or ""
+    if not issue:
+        issue_match = re.search(r"#?\b(\d+(?:\.\d+)?)[a-zA-Z]*\b", clean_title)
+        if issue_match:
+            issue = issue_match.group(1)
+
+    # Normalize issue variant letters (e.g. #1H -> 1)
+    if issue:
+        issue_num_only = re.sub(r"[a-zA-Z]+$", "", issue)
+    else:
+        issue_num_only = ""
+
+    # Short Title Disambiguation Engine: len <= 3 or single word or numeric
+    words = clean_title.split()
+    series_only = re.sub(r"\b\d+(?:\.\d+)?\b", "", clean_title).strip()
+    is_short_title = len(clean_title) <= 3 or len(series_only) <= 3 or len(words) == 1 or clean_title.isdigit()
+
+    if is_short_title and category.lower() == "comic":
+        if issue_num_only and issue_num_only not in clean_title:
+            query_base = f"{clean_title} {issue_num_only} comic book issue".strip()
+        else:
+            query_base = f"{clean_title} comic book issue".strip()
+    elif category.lower() == "comic":
+        if "comic" not in clean_title.lower():
+            query_base = f"{clean_title} {issue_num_only} comic".strip() if issue_num_only and issue_num_only not in clean_title else f"{clean_title} comic".strip()
+        else:
+            query_base = clean_title
+    elif category.lower() == "trading_card":
+        query_base = f"{clean_title} card".strip() if "card" not in clean_title.lower() else clean_title.strip()
+    elif category.lower() == "funko":
+        query_base = f"Funko Pop {clean_title}".strip() if "funko" not in clean_title.lower() else clean_title.strip()
+    else:
+        query_base = clean_title.strip()
+
+    query_base = re.sub(r"\s+", " ", query_base).strip()
+
+    # Primary Category ID Mapping
+    category_map = {
+        "comic": "259104",        # US Comics
+        "trading_card": "183454", # TCG Cards
+        "funko": "262334",        # Funko Vinyl
+        "figure": "220"           # Action Figures
+    }
+    category_id = category_map.get(category.lower(), "63")
+
+    # Negative Keyword Exclusions
+    negatives = ["-lot", "-set", "-run", "-collection", "-shirt", "-statue", "-toy", "-reprint"]
+    
+    cond_clean = (condition_grade or "").lower()
+    is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx", "psa", "bgs"])
+    
+    if not is_graded and category.lower() == "comic":
+        negatives.extend(["-cgc", "-cbcs", "-pgx"])
+
+    final_query = f"{query_base} {' '.join(negatives)}"
+
+    return {
+        "raw_title": title,
+        "cleaned_title": clean_title,
+        "issue_number": issue_num_only,
+        "api_query": final_query,
+        "category_id": category_id,
+        "is_short_title": is_short_title,
+        "is_graded": is_graded
+    }
+
+
 def clean_comic_title_for_search(raw_title: str) -> str:
     """
-    Advanced comic title sanitizer for eBay comp queries:
-    - Removes 'The ' prefix from titles (case-insensitive).
-    - Strips parentheticals like (Marvel Comics), (1991), etc.
-    - Strips volume notations like ', Vol. 5' or 'Vol. 1'.
-    - Strips variant letter suffixes from issue numbers (#10A -> 10, #25A1 -> 25), retaining decimal issues (#700.1).
-    - Strips trailing special characters (/, :, ,, #).
-    Example: 'The Amazing Spider-Man, Vol. 5 #624A' -> 'Amazing Spider-Man 624'
+    Advanced comic title sanitizer for eBay comp queries.
     """
     if not raw_title:
         return ""
@@ -283,15 +365,11 @@ def is_short_or_generic_title(title_text: str) -> bool:
 
 def build_ebay_search_query(title: str, category: str = "comic", condition_grade: Optional[str] = None) -> str:
     """
-    Constructs a clean, direct primary search query: {Cleaned Series Name} {Issue Number}.
-    For short or generic titles (e.g. '52', 'Silk', 'Star Wars'), appends ' comic': q={Cleaned Title} {Issue} comic.
+    Constructs a clean, direct primary search query via sanitize_and_disambiguate_query.
     Log line format: [VALUATION QUERY] Original: "{raw_title}" -> Cleaned: "{cleaned_query}"
     """
-    cleaned = clean_comic_title_for_search(title)
-    if is_short_or_generic_title(cleaned):
-        query = f"{cleaned} comic"
-    else:
-        query = cleaned
+    query_info = sanitize_and_disambiguate_query(title, category=category, condition_grade=condition_grade)
+    query = query_info["api_query"]
 
     log_msg = f'[VALUATION QUERY] Original: "{title}" -> Cleaned: "{query}"'
     logger.info(log_msg)
@@ -451,15 +529,18 @@ def get_grade_multiplier(condition_grade: Optional[str]) -> float:
     return 1.0
 
 
-def calculate_comp_fmv(
+def calculate_robust_fmv_v2(
     comp_prices: List[float],
     category: str = "comic",
     condition_grade: Optional[str] = None,
     current_val: float = 0.0
 ) -> float:
     """
-    Calculates Fair Market Value (FMV) using median across matching sold comps after 3x median & 1.5x IQR outlier removal,
-    applying CGC/CBCS condition grade scaling multipliers.
+    4-Stage Outlier Rejection Pipeline & Condition Scaling Matrix:
+    1. Gross Lot Threshold (3x median)
+    2. Interquartile Range (IQR 1.5x) Trimming
+    3. Modified Z-Score / Median Absolute Deviation (MAD > 3.5)
+    4. 15% Trimmed Median Calculation + Condition Grade Multiplier Scaling
     Returns 0.0 if comp_prices is empty or invalid.
     Log line format: [EBAY MATH DEBUG] Raw Comps: {raw_prices} | Filtered Comps: {filtered_prices} | Median: ${median_price}
     """
@@ -469,29 +550,89 @@ def calculate_comp_fmv(
         print(debug_log)
         return 0.0
 
-    raw_prices = comp_prices
-    initial_median = statistics.median(raw_prices)
-    filtered_prices = [p for p in raw_prices if p <= 3.0 * initial_median] if initial_median > 0 else raw_prices
-    clean_comps = filter_outliers_iqr(filtered_prices)
-    if not clean_comps:
-        clean_comps = filtered_prices if filtered_prices else raw_prices
+    prices = sorted([float(p) for p in comp_prices if p > 0])
+    if not prices:
+        debug_log = "[EBAY MATH DEBUG] Raw Comps: [] | Filtered Comps: [] | Median: $0.00"
+        logger.info(debug_log)
+        print(debug_log)
+        return 0.0
 
-    median_val = statistics.median(clean_comps)
+    # STAGE 1: Gross Lot Threshold Filter (drop prices > 3.0x median)
+    med_raw = statistics.median(prices)
+    if med_raw > 0:
+        stage1_prices = [p for p in prices if p <= 3.0 * med_raw]
+    else:
+        stage1_prices = prices
+
+    if not stage1_prices:
+        stage1_prices = prices
+
+    # STAGE 2: Interquartile Range (IQR 1.5x) Trimming
+    n1 = len(stage1_prices)
+    if n1 >= 4:
+        q1 = statistics.quantiles(stage1_prices, n=4)[0]
+        q3 = statistics.quantiles(stage1_prices, n=4)[2]
+        iqr = q3 - q1
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        stage2_prices = [p for p in stage1_prices if lower_bound <= p <= upper_bound]
+    else:
+        stage2_prices = stage1_prices
+
+    if not stage2_prices:
+        stage2_prices = stage1_prices
+
+    # STAGE 3: Modified Z-Score Filter (Median Absolute Deviation MAD > 3.5)
+    med_s2 = statistics.median(stage2_prices)
+    mad = statistics.median([abs(p - med_s2) for p in stage2_prices])
+    
+    if mad > 0:
+        stage3_prices = []
+        for p in stage2_prices:
+            mod_z = (0.6745 * abs(p - med_s2)) / mad
+            if mod_z <= 3.5:
+                stage3_prices.append(p)
+    else:
+        stage3_prices = stage2_prices
+
+    if not stage3_prices:
+        stage3_prices = stage2_prices
+
+    # STAGE 4: 15% Trimmed Median Calculation
+    n3 = len(stage3_prices)
+    if n3 >= 5:
+        trim_count = int(math.floor(n3 * 0.15))
+        if trim_count > 0:
+            trimmed_prices = stage3_prices[trim_count : n3 - trim_count]
+        else:
+            trimmed_prices = stage3_prices
+    else:
+        trimmed_prices = stage3_prices
+
+    if not trimmed_prices:
+        trimmed_prices = stage3_prices
+
+    base_fmv = statistics.median(trimmed_prices)
 
     cond_clean = (condition_grade or "").lower()
-    is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
+    is_graded = any(kw in cond_clean for kw in ["cgc", "cbcs", "pgx", "psa", "bgs"])
 
     if category.lower() == "comic" and not is_graded:
-        mult = get_grade_multiplier(condition_grade)
-        median_val = median_val * mult
-        if median_val > 30.0 and current_val > 0 and current_val <= 30.0:
-            median_val = min(median_val, max(30.0, current_val * 1.25))
+        multiplier = get_grade_multiplier(condition_grade)
+        base_fmv = base_fmv * multiplier
 
-    final_median = round(median_val, 2)
-    debug_log = f"[EBAY MATH DEBUG] Raw Comps: {raw_prices} | Filtered Comps: {clean_comps} | Median: ${final_median:.2f}"
+    # Cap sudden growth relative to existing low valuation
+    if base_fmv > 30.0 and 0.0 < current_val <= 30.0:
+        base_fmv = min(base_fmv, max(30.0, current_val * 1.25))
+
+    final_median = round(base_fmv, 2)
+    debug_log = f"[EBAY MATH DEBUG] Raw Comps: {prices} | Filtered Comps: {trimmed_prices} | Median: ${final_median:.2f}"
     logger.info(debug_log)
     print(debug_log)
     return final_median
+
+
+calculate_comp_fmv = calculate_robust_fmv_v2
 
 
 def fetch_ebay_sold_comps(
@@ -513,8 +654,12 @@ def fetch_ebay_sold_comps(
     clean_barcode = barcode.strip() if barcode else None
 
     # Priority 1: Official eBay Browse API (UPC lookup)
+    query_info = sanitize_and_disambiguate_query(title, category=category, condition_grade=condition_grade)
+    title_query = query_info["api_query"]
+    cat_id = query_info["category_id"]
+
     if clean_barcode:
-        api_upc_comps = query_ebay_browse_api(clean_barcode, gtin=clean_barcode)
+        api_upc_comps = query_ebay_browse_api(clean_barcode, gtin=clean_barcode, category_ids=cat_id)
         if api_upc_comps:
             final_price = calculate_comp_fmv(api_upc_comps, category=category, condition_grade=condition_grade, current_val=current_val)
             if final_price > 0:
@@ -524,8 +669,7 @@ def fetch_ebay_sold_comps(
                 return final_price
 
     # Priority 2 (Stage 1): Official eBay Browse API (Primary Cleaned Title search)
-    title_query = build_ebay_search_query(title, category, condition_grade)
-    api_title_comps = query_ebay_browse_api(title_query)
+    api_title_comps = query_ebay_browse_api(title_query, category_ids=cat_id)
     if api_title_comps:
         final_price = calculate_comp_fmv(api_title_comps, category=category, condition_grade=condition_grade, current_val=current_val)
         if final_price > 0:
@@ -535,9 +679,11 @@ def fetch_ebay_sold_comps(
             return final_price
 
     # Priority 2b (Stage 2): If Stage 1 returns 0 items, retry Stage 2 broad title search
-    stage2_query = build_stage2_ebay_search_query(title_query)
-    if stage2_query and stage2_query != title_query:
-        api_stage2_comps = query_ebay_browse_api(stage2_query)
+    stage2_raw = build_stage2_ebay_search_query(query_info["cleaned_title"])
+    if stage2_raw and stage2_raw != query_info["cleaned_title"]:
+        stage2_info = sanitize_and_disambiguate_query(stage2_raw, category=category, condition_grade=condition_grade)
+        stage2_query = stage2_info["api_query"]
+        api_stage2_comps = query_ebay_browse_api(stage2_query, category_ids=cat_id)
         if api_stage2_comps:
             final_price = calculate_comp_fmv(api_stage2_comps, category=category, condition_grade=condition_grade, current_val=current_val)
             if final_price > 0:
@@ -547,9 +693,11 @@ def fetch_ebay_sold_comps(
                 return final_price
 
     # Priority 2c: Broader Series fallback
-    broader_query = build_broader_ebay_search_query(title)
-    if broader_query and broader_query not in [title_query, stage2_query]:
-        api_broader_comps = query_ebay_browse_api(broader_query)
+    broader_raw = build_broader_ebay_search_query(title)
+    if broader_raw and broader_raw != query_info["cleaned_title"]:
+        broader_info = sanitize_and_disambiguate_query(broader_raw, category=category, condition_grade=condition_grade)
+        broader_query = broader_info["api_query"]
+        api_broader_comps = query_ebay_browse_api(broader_query, category_ids=cat_id)
         if api_broader_comps:
             final_price = calculate_comp_fmv(api_broader_comps, category=category, condition_grade=condition_grade, current_val=current_val)
             if final_price > 0:
