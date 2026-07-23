@@ -676,10 +676,18 @@ function handleLlmBadgeClick() {
 
 // Helper Utilities
 function openModal(id) {
-    document.getElementById(id)?.classList.add('active');
+    const el = document.getElementById(id);
+    if (el) {
+        el.classList.add('active');
+        el.classList.add('show');
+    }
 }
 function closeModal(id) {
-    document.getElementById(id)?.classList.remove('active');
+    const el = document.getElementById(id);
+    if (el) {
+        el.classList.remove('active');
+        el.classList.remove('show');
+    }
 }
 function escapeHtml(str) {
     return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
