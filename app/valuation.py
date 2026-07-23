@@ -127,11 +127,11 @@ def get_ebay_oauth_token() -> Optional[str]:
         return None
 
 
-def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]:
+def query_ebay_browse_api(query: str, gtin: Optional[str] = None, category_ids: Optional[str] = "63") -> List[float]:
     """
     Queries official eBay Browse API (/buy/browse/v1/item_summary/search) with OAuth2 bearer token.
-    Prints raw HTTP response status code and JSON output for EVERY title search query.
-    Logs format: [EBAY RAW RESPONSE] Status: {status_code} | Query: '{cleaned_query}' | Total Results: {total_items}
+    Passes category_ids=63 (Comic Books) to lock category and block non-comic collectibles/toys.
+    Filters out bulk lot listings (lot, set, run, cgc, cbcs, pgx, omnibus, statue, toy) and 3x median price outliers.
     """
     search_log = f"[EBAY API SEARCH] Querying term: '{query}'"
     logger.info(search_log)
@@ -147,6 +147,8 @@ def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]
         "X-EBAY-C-MARKETPLACE-ID": "EBAY-US"
     }
     params: Dict[str, Any] = {"limit": "10"}
+    if category_ids:
+        params["category_ids"] = category_ids
 
     if gtin:
         params["gtin"] = gtin.strip()
@@ -166,8 +168,14 @@ def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]
             logger.info(raw_log)
             print(raw_log)
 
-            prices = []
+            raw_prices = []
+            keywords = ["lot", "set", "run", "cgc", "cbcs", "pgx", "omnibus", "statue", "toy"]
             for item in summaries:
+                item_title = (item.get("title") or "").lower()
+                # Ignore bulk lot listings or non-raw/toy items matching keywords
+                if any(re.search(r'\b' + re.escape(kw) + r'\b', item_title) for kw in keywords):
+                    continue
+
                 price_val = None
                 if "price" in item and "value" in item["price"]:
                     price_val = float(item["price"]["value"])
@@ -175,8 +183,28 @@ def query_ebay_browse_api(query: str, gtin: Optional[str] = None) -> List[float]
                     price_val = float(item["currentBidPrice"]["value"])
                 
                 if price_val and price_val > 0:
-                    prices.append(price_val)
-            return prices
+                    raw_prices.append(price_val)
+
+            if raw_prices:
+                initial_median = statistics.median(raw_prices)
+                filtered_prices = [p for p in raw_prices if p <= 3.0 * initial_median]
+                if not filtered_prices:
+                    filtered_prices = raw_prices
+
+                clean_comps = filter_outliers_iqr(filtered_prices)
+                if not clean_comps:
+                    clean_comps = filtered_prices
+
+                median_price = round(statistics.median(clean_comps), 2)
+                debug_log = f"[EBAY MATH DEBUG] Raw Comps: {raw_prices} | Filtered Comps: {clean_comps} | Median: ${median_price:.2f}"
+                logger.info(debug_log)
+                print(debug_log)
+                return clean_comps
+            else:
+                debug_log = f"[EBAY MATH DEBUG] Raw Comps: [] | Filtered Comps: [] | Median: $0.00"
+                logger.info(debug_log)
+                print(debug_log)
+                return []
         else:
             raw_log = f"[EBAY RAW RESPONSE] Status: {status_code} | Query: '{query}' | Total Results: 0"
             logger.warning(raw_log)
@@ -237,12 +265,34 @@ def clean_comic_title_for_search(raw_title: str) -> str:
 sanitize_search_query = clean_comic_title_for_search
 
 
+def is_short_or_generic_title(title_text: str) -> bool:
+    if "comic" in title_text.lower():
+        return False
+    series_part = re.sub(r"\b\d+(?:\.\d+)?\b", "", title_text).strip()
+    words = series_part.split()
+    generic_set = {
+        "52", "silk", "star wars", "thor", "flash", "batman", "hulk", "venom", 
+        "spawn", "x-men", "x men", "saga", "fire", "glow", "bone", "dune"
+    }
+    if series_part.lower() in generic_set:
+        return True
+    if len(words) == 1 or len(series_part) <= 10:
+        return True
+    return False
+
+
 def build_ebay_search_query(title: str, category: str = "comic", condition_grade: Optional[str] = None) -> str:
     """
     Constructs a clean, direct primary search query: {Cleaned Series Name} {Issue Number}.
+    For short or generic titles (e.g. '52', 'Silk', 'Star Wars'), appends ' comic': q={Cleaned Title} {Issue} comic.
     Log line format: [VALUATION QUERY] Original: "{raw_title}" -> Cleaned: "{cleaned_query}"
     """
-    query = clean_comic_title_for_search(title)
+    cleaned = clean_comic_title_for_search(title)
+    if is_short_or_generic_title(cleaned):
+        query = f"{cleaned} comic"
+    else:
+        query = cleaned
+
     log_msg = f'[VALUATION QUERY] Original: "{title}" -> Cleaned: "{query}"'
     logger.info(log_msg)
     print(log_msg)
@@ -359,15 +409,22 @@ def calculate_comp_fmv(
     current_val: float = 0.0
 ) -> float:
     """
-    Calculates Fair Market Value (FMV) using median across matching sold comps after 1.5x IQR outlier removal.
+    Calculates Fair Market Value (FMV) using median across matching sold comps after 3x median & 1.5x IQR outlier removal.
     Returns 0.0 if comp_prices is empty or invalid.
+    Log line format: [EBAY MATH DEBUG] Raw Comps: {raw_prices} | Filtered Comps: {filtered_prices} | Median: ${median_price}
     """
     if not comp_prices:
+        debug_log = "[EBAY MATH DEBUG] Raw Comps: [] | Filtered Comps: [] | Median: $0.00"
+        logger.info(debug_log)
+        print(debug_log)
         return 0.0
 
-    clean_comps = filter_outliers_iqr(comp_prices)
+    raw_prices = comp_prices
+    initial_median = statistics.median(raw_prices)
+    filtered_prices = [p for p in raw_prices if p <= 3.0 * initial_median] if initial_median > 0 else raw_prices
+    clean_comps = filter_outliers_iqr(filtered_prices)
     if not clean_comps:
-        return 0.0
+        clean_comps = filtered_prices if filtered_prices else raw_prices
 
     median_val = statistics.median(clean_comps)
 
@@ -378,7 +435,11 @@ def calculate_comp_fmv(
         if median_val > 30.0 and current_val > 0 and current_val <= 30.0:
             median_val = min(median_val, max(30.0, current_val * 1.25))
 
-    return round(median_val, 2)
+    final_median = round(median_val, 2)
+    debug_log = f"[EBAY MATH DEBUG] Raw Comps: {raw_prices} | Filtered Comps: {clean_comps} | Median: ${final_median:.2f}"
+    logger.info(debug_log)
+    print(debug_log)
+    return final_median
 
 
 def fetch_ebay_sold_comps(
