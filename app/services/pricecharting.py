@@ -47,7 +47,10 @@ def query_pricecharting_api(
                 if isinstance(s_data, list):
                     products = s_data
                 elif isinstance(s_data, dict):
-                    products = s_data.get("products", [])
+                    if "products" in s_data and isinstance(s_data["products"], list):
+                        products = s_data["products"]
+                    elif "id" in s_data or "loose-price" in s_data or "loose_price" in s_data:
+                        products = [s_data]
 
                 if products and len(products) > 0:
                     first_prod = products[0]
