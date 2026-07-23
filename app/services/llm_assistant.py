@@ -360,3 +360,106 @@ async def query_vault_assistant(
         "model_used": f"{target_model} (Offline — Local Fallback)",
         "context": context_summary
     }
+
+
+def generate_item_market_summary(item_id: int, db: Session) -> Dict[str, Any]:
+    """
+    Generates a concise market briefing for a single item based on
+    its valuation history, sold comps, purchase price, and market trajectory.
+    """
+    item = db.query(CollectibleItem).filter(CollectibleItem.id == item_id).first()
+    if not item:
+        return {"status": "error", "message": f"Item #{item_id} not found."}
+
+    val_history = item.valuation_history
+    val_points = [v.value for v in val_history] if val_history else []
+    
+    current_val = item.current_market_value or 0.0
+    cost = item.purchase_price or 0.0
+    profit = round(current_val - cost, 2)
+    profit_pct = round((profit / cost * 100) if cost > 0 else 0.0, 1)
+
+    key_text = f" Driven by '{item.key_reasons}' key status." if item.is_key_issue and item.key_reasons else ""
+
+    if val_points and len(val_points) > 1:
+        min_comp = min(val_points)
+        max_comp = max(val_points)
+        avg_comp = round(sum(val_points) / len(val_points), 2)
+        briefing = (
+            f"{item.title} demonstrates solid market liquidity with recent comps ranging from ${min_comp:.2f} to ${max_comp:.2f} (avg ${avg_comp:.2f})."
+            f"{key_text} Currently valued at ${current_val:.2f}, representing a net ROI of {profit_pct:+.1f}% over purchase cost."
+        )
+    else:
+        briefing = (
+            f"{item.title} ({item.category}) is currently valued at ${current_val:.2f} based on fair market comps."
+            f"{key_text} Capital cost basis is ${cost:.2f}, yielding a net gain of ${profit:+.2f} ({profit_pct:+.1f}% ROI)."
+        )
+
+    return {
+        "status": "success",
+        "item_id": item_id,
+        "title": item.title,
+        "current_market_value": current_val,
+        "summary": briefing
+    }
+
+
+def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
+    """
+    Analyzes overall vault composition, category distribution, top gains, and yields proactive AI insights.
+    """
+    items = db.query(CollectibleItem).all()
+    if not items:
+        return {
+            "status": "success",
+            "headline": "Empty Vault Inventory",
+            "insights": ["Add items to your vault to generate AI portfolio analytics."],
+            "advice": "Snap photos or import XML catalogs to start tracking asset value."
+        }
+
+    total_items = len(items)
+    total_val = round(sum(i.current_market_value for i in items), 2)
+    total_cost = round(sum(i.purchase_price for i in items), 2)
+    total_gain = round(total_val - total_cost, 2)
+    overall_roi = round((total_gain / total_cost * 100) if total_cost > 0 else 0.0, 1)
+
+    cat_values: Dict[str, float] = {}
+    for i in items:
+        cat = i.category or "other"
+        cat_values[cat] = cat_values.get(cat, 0.0) + i.current_market_value
+
+    top_cat = max(cat_values.items(), key=lambda x: x[1]) if cat_values else ("other", 0.0)
+    top_cat_pct = round((top_cat[1] / total_val * 100) if total_val > 0 else 0.0, 1)
+
+    key_items = [i for i in items if i.is_key_issue]
+    key_count = len(key_items)
+    key_val = sum(k.current_market_value for k in key_items)
+    key_pct = round((key_val / total_val * 100) if total_val > 0 else 0.0, 1)
+
+    cat_display_map = {"comic": "Comic Books", "funko": "Funko Pops", "figure": "Action Figures", "trading_card": "Trading Cards"}
+    top_cat_name = cat_display_map.get(top_cat[0], top_cat[0].capitalize())
+
+    headline = f"Portfolio Insight: {top_cat_name} Lead Vault at {top_cat_pct}% Concentration (${top_cat[1]:,.2f})"
+
+    insights = [
+        f"Vault holds {total_items} items with a total Fair Market Value of ${total_val:,.2f} (Net Gain ${total_gain:+,.2f}, {overall_roi:+.1f}% ROI).",
+        f"Top category '{top_cat_name}' represents ${top_cat[1]:,.2f} ({top_cat_pct}% of total asset value).",
+        f"{key_count} verified key issues represent ${key_val:,.2f} ({key_pct}% of total portfolio valuation)."
+    ]
+
+    advice = "Consider grading high-value raw key issues or balancing portfolio exposure across underrepresented categories."
+
+    return {
+        "status": "success",
+        "headline": headline,
+        "total_items": total_items,
+        "total_value": total_val,
+        "total_gain": total_gain,
+        "overall_roi": overall_roi,
+        "top_category": top_cat_name,
+        "top_category_percentage": top_cat_pct,
+        "key_issues_count": key_count,
+        "insights": insights,
+        "advice": advice
+    }
+

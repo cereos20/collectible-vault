@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.services.llm_assistant import query_vault_assistant
+from app.services.llm_assistant import query_vault_assistant, generate_portfolio_insights
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
 
@@ -28,3 +28,12 @@ async def assistant_chat(payload: AssistantChatRequest, db: Session = Depends(ge
         db=db
     )
     return result
+
+
+@router.get("/portfolio-insights")
+def get_portfolio_insights_endpoint(db: Session = Depends(get_db)):
+    """
+    Analyzes overall vault composition, category distribution, and top gains to yield proactive AI insights.
+    """
+    return generate_portfolio_insights(db)
+

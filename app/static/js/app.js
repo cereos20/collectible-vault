@@ -9,6 +9,7 @@ let valuationChart = null;
 
 function initApp() {
     fetchDashboardStats();
+    fetchPortfolioInsights();
     loadCollectibles();
     fetchLlmStatus();
     setupEventListeners();
@@ -119,7 +120,7 @@ async function fetchDashboardStats() {
 
 // --- LOAD COLLECTIBLES GRID ---
 async function loadCollectibles() {
-    const searchVal = document.getElementById('searchInput')?.value || '';
+    const searchVal = (document.getElementById('searchInput')?.value || '').trim();
     const sortVal = document.getElementById('sortSelect')?.value || 'newest';
     const grid = document.getElementById('collectiblesGrid');
     
@@ -129,7 +130,13 @@ async function loadCollectibles() {
     </div>`;
 
     try {
-        const url = `/api/items?category=${encodeURIComponent(currentCategory)}&search=${encodeURIComponent(searchVal)}&sort_by=${encodeURIComponent(sortVal)}`;
+        let url;
+        const isNlQuery = searchVal.length > 0 && /\b(over|under|above|below|greater|less|comics?|funkos?|pops?|figures?|cards?|keys?|mint|cgc|\$\d+)\b/i.test(searchVal);
+        if (isNlQuery) {
+            url = `/api/items/search/nl?q=${encodeURIComponent(searchVal)}`;
+        } else {
+            url = `/api/items?category=${encodeURIComponent(currentCategory)}&search=${encodeURIComponent(searchVal)}&sort_by=${encodeURIComponent(sortVal)}`;
+        }
         const res = await fetch(url);
         const items = await res.json();
 
@@ -174,7 +181,7 @@ function renderCollectibleCard(item) {
     return `
     <div class="collectible-card glass-panel" id="card-${item.id}">
         <div class="card-image-wrap">
-            <img src="${imgUrl}" onerror="this.onerror=null; this.src='/static/images/placeholder.png'; this.classList.add('img-fallback');" alt="${escapeHtml(item.title)}" loading="lazy">
+            <img src="${imgUrl}" onerror="this.onerror=null; this.src='/static/images/badges/${item.category || 'other'}.svg'; this.classList.add('img-fallback');" alt="${escapeHtml(item.title)}" loading="lazy">
             <span class="category-badge ${catClass}">${item.category.replace('_', ' ')}</span>
             ${item.condition_grade ? `<span class="grade-badge">${escapeHtml(item.condition_grade)}</span>` : ''}
         </div>
@@ -690,6 +697,7 @@ async function openEditModal(itemId) {
         const keyReasons = document.getElementById('editKeyReasons');
         if (keyReasons) keyReasons.value = item.key_reasons || '';
 
+        fetchMarketSummaryForItem(item.id);
         openModal('editModal');
     } catch (err) {
         alert('Error fetching item details for edit: ' + err.message);
@@ -994,4 +1002,55 @@ async function saveOllamaHostSetting() {
         alert(`Error saving Ollama Host endpoint: ${err.message}`);
     }
 }
+
+
+// --- SMART PORTFOLIO INSIGHTS & MARKET BRIEFING ---
+async function fetchPortfolioInsights() {
+    const banner = document.getElementById('portfolioInsightsBanner');
+    const headline = document.getElementById('portfolioInsightHeadline');
+    const body = document.getElementById('portfolioInsightBody');
+
+    try {
+        const res = await fetch('/api/assistant/portfolio-insights');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'success') {
+                if (headline) headline.innerText = data.headline || 'Portfolio Insight';
+                if (body) {
+                    const insightsList = (data.insights || []).map(i => `• ${escapeHtml(i)}`).join('<br>');
+                    const adviceText = data.advice ? `<div style="margin-top:0.4rem; color:var(--text-light); font-weight:600;"><i class="fas fa-compass"></i> ${escapeHtml(data.advice)}</div>` : '';
+                    body.innerHTML = `${insightsList}${adviceText}`;
+                }
+                if (banner) banner.style.display = 'block';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to fetch portfolio insights:', err);
+    }
+}
+
+function dismissPortfolioInsight() {
+    const banner = document.getElementById('portfolioInsightsBanner');
+    if (banner) banner.style.display = 'none';
+}
+
+async function fetchMarketSummaryForItem(itemId) {
+    const box = document.getElementById('itemMarketSummaryBox');
+    const textEl = document.getElementById('itemMarketSummaryText');
+    if (box) box.style.display = 'none';
+
+    try {
+        const res = await fetch(`/api/items/${itemId}/market-summary`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'success' && data.summary) {
+                if (textEl) textEl.innerText = data.summary;
+                if (box) box.style.display = 'block';
+            }
+        }
+    } catch (err) {
+        console.error('Failed to fetch market summary:', err);
+    }
+}
+
 

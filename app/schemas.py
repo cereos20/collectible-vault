@@ -85,6 +85,9 @@ class VisionIntakeResponse(BaseModel):
     confidence_score: float = 0.85
     extracted_metadata: Dict[str, Any] = Field(default_factory=dict)
     summary: str
+    image_url: Optional[str] = None
+    is_key_issue: bool = False
+    key_reasons: Optional[str] = None
 
 
 class DashboardStatsResponse(BaseModel):

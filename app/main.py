@@ -1,4 +1,5 @@
 import os
+import re
 import csv
 import io
 import time
@@ -16,7 +17,9 @@ from sqlalchemy import desc
 
 from app.database import get_db, init_db, SessionLocal
 from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem, PortfolioSnapshot
-from app.routers import assistant, settings
+from app.routers import assistant, settings, intake
+from app.services.image_healer import heal_missing_item_images, heal_single_item_image
+from app.services.llm_assistant import generate_item_market_summary
 from app.schemas import (
     CollectibleCreate,
     CollectibleUpdate,
@@ -166,6 +169,7 @@ templates = Jinja2Templates(directory="templates")
 
 app.include_router(assistant.router)
 app.include_router(settings.router)
+app.include_router(intake.router)
 
 
 @app.get("/")
@@ -330,6 +334,99 @@ def trigger_fix_categories(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/admin/heal-images")
+def trigger_heal_images(db: Session = Depends(get_db)):
+    """Triggers an on-demand image healing run across all vault items."""
+    return heal_missing_item_images(db)
+
+
+def parse_natural_language_search(query_str: str, db: Session) -> List[CollectibleItem]:
+    """
+    Parses natural language search queries into structured SQL filters.
+    Supports category detection, price bounds ('over $100', 'under $50'),
+    key issue flags, grade keywords ('Mint', 'CGC 9.8'), and title/notes search.
+    """
+    if not query_str or not query_str.strip():
+        return db.query(CollectibleItem).all()
+
+    q_lower = query_str.lower().strip()
+    query = db.query(CollectibleItem)
+
+    # Category matching
+    if any(k in q_lower for k in ["comic", "comics", "book"]):
+        query = query.filter(CollectibleItem.category == "comic")
+    elif any(k in q_lower for k in ["funko", "funkos", "pop", "pops"]):
+        query = query.filter(CollectibleItem.category == "funko")
+    elif any(k in q_lower for k in ["figure", "figures", "toy", "toys", "action figure"]):
+        query = query.filter(CollectibleItem.category.in_(["figure", "action_figure"]))
+    elif any(k in q_lower for k in ["card", "cards", "pokemon", "pokémon", "trading card"]):
+        query = query.filter(CollectibleItem.category.in_(["trading_card", "card"]))
+
+    # Key issue matching
+    if "key" in q_lower or "keys" in q_lower:
+        query = query.filter(CollectibleItem.is_key_issue == True)
+
+    # Price bounds matching e.g. "over 100", "over $100", "greater than 100", "under $50"
+    min_match = re.search(r'(?:over|above|greater than|>\s*)\$?\s*(\d+(?:\.\d+)?)', q_lower)
+    if min_match:
+        min_val = float(min_match.group(1))
+        query = query.filter(CollectibleItem.current_market_value >= min_val)
+
+    max_match = re.search(r'(?:under|below|less than|<\s*)\$?\s*(\d+(?:\.\d+)?)', q_lower)
+    if max_match:
+        max_val = float(max_match.group(1))
+        query = query.filter(CollectibleItem.current_market_value <= max_val)
+
+    # Condition grade matching
+    if "cgc" in q_lower:
+        query = query.filter(CollectibleItem.condition_grade.ilike("%CGC%"))
+    elif "mint" in q_lower:
+        query = query.filter(CollectibleItem.condition_grade.ilike("%Mint%"))
+
+    # Title / notes keyword matching
+    clean_str = re.sub(
+        r'(?:over|above|under|below|greater than|less than|comics?|funkos?|pops?|figures?|action figures?|trading cards?|cards?|keys?|key issues?|mint|cgc|\$\d+(?:\.\d+)?)',
+        '',
+        q_lower
+    ).strip()
+
+    tokens = [w for w in re.findall(r'\b[a-zA-Z0-9\'-]+\b', clean_str) if len(w) > 1]
+    for t in tokens:
+        pattern = f"%{t}%"
+        query = query.filter(
+            CollectibleItem.title.ilike(pattern) |
+            CollectibleItem.notes.ilike(pattern) |
+            CollectibleItem.key_reasons.ilike(pattern)
+        )
+
+    return query.all()
+
+
+@app.get("/api/items/search/nl", response_model=List[CollectibleResponse])
+def natural_language_search(q: str = Query("", alias="q"), db: Session = Depends(get_db)):
+    """
+    Parses natural language query strings (e.g. 'Spider-Man comics over $100', 'Mint Funkos')
+    into structured SQL queries and returns matching items.
+    """
+    items = parse_natural_language_search(q, db)
+    result = []
+    for item in items:
+        resp = CollectibleResponse.model_validate(item)
+        resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
+        resp.profit_loss_percentage = round(
+            ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
+            if item.purchase_price > 0 else 0.0, 1
+        )
+        result.append(resp)
+    return result
+
+
+@app.get("/api/items/{item_id}/market-summary")
+def get_item_market_summary_endpoint(item_id: int, db: Session = Depends(get_db)):
+    """Returns a 2-sentence market briefing for the specified item."""
+    return generate_item_market_summary(item_id, db)
+
+
 @app.post("/api/items", response_model=CollectibleResponse, status_code=201)
 @app.post("/api/collectibles", response_model=CollectibleResponse, status_code=201)
 def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)):
@@ -346,6 +443,9 @@ def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)
     if is_key:
         item.is_key_issue = True
         item.key_reasons = key_reason
+
+    # Automatic image healing / fallback badge assignment
+    heal_single_item_image(item)
 
     db.add(item)
     db.commit()
