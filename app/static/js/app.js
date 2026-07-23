@@ -166,6 +166,10 @@ function renderCollectibleCard(item) {
         .map(([k, v]) => `<span class="meta-tag">${k.replace('_', ' ')}: ${v}</span>`)
         .join('');
 
+    const keyBadge = item.is_key_issue
+        ? `<span class="badge badge-key" style="background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; margin-left: 0.3rem;" title="${escapeHtml(item.key_reasons || 'Key Issue')}">🔑 KEY ISSUE</span>`
+        : '';
+
     return `
     <div class="collectible-card glass-panel" id="card-${item.id}">
         <div class="card-image-wrap">
@@ -175,7 +179,7 @@ function renderCollectibleCard(item) {
         </div>
         <div class="card-title">
             ${escapeHtml(item.title)}
-            ${item.is_key_issue ? `<span style="background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; margin-left: 0.3rem;" title="${escapeHtml(item.key_reasons || 'Key Issue')}">🔑 KEY ISSUE</span>` : ''}
+            ${keyBadge}
         </div>
         ${metaTags ? `<div class="meta-pills">${metaTags}</div>` : ''}
         
@@ -204,6 +208,8 @@ function renderCollectibleCard(item) {
     </div>`;
 }
 
+const renderItemCard = renderCollectibleCard;
+
 function exportVaultCsv() {
     window.location.href = '/api/export/csv';
 }
@@ -212,14 +218,62 @@ function exportVaultJson() {
     window.location.href = '/api/export/json';
 }
 
+let valuationPollInterval = null;
+
 async function triggerAsyncValuation() {
+    const btn = document.getElementById('btn-refresh-async') || document.getElementById('btnRefreshValuationsAsync');
+    if (btn) btn.disabled = true;
+
     try {
         const res = await fetch('/api/valuation/refresh-async', { method: 'POST' });
         const data = await res.json();
-        alert(data.message || 'Background valuation refresh started.');
+
+        const container = document.getElementById('valuationProgressContainer');
+        if (container) container.style.display = 'block';
+
+        if (valuationPollInterval) clearInterval(valuationPollInterval);
+        valuationPollInterval = setInterval(pollValuationStatus, 1000);
+        pollValuationStatus();
     } catch (err) {
         console.error('Failed to trigger async valuation:', err);
-        alert('Error triggering async valuation refresh.');
+        alert('Error triggering background valuation refresh.');
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function pollValuationStatus() {
+    try {
+        const res = await fetch('/api/valuation/status');
+        const data = await res.json();
+
+        const statusMsg = document.getElementById('valuationStatusMsg');
+        const progressPct = document.getElementById('valuationProgressPct');
+        const progressBar = document.getElementById('valuationProgressBar');
+        const container = document.getElementById('valuationProgressContainer');
+        const btn = document.getElementById('btn-refresh-async') || document.getElementById('btnRefreshValuationsAsync');
+
+        const pct = data.progress_percentage || 0;
+        if (statusMsg) statusMsg.innerText = `Refreshed ${data.processed_items} of ${data.total_items} items (${data.status})`;
+        if (progressPct) progressPct.innerText = `${pct}%`;
+        if (progressBar) progressBar.style.width = `${pct}%`;
+
+        if (data.status === 'completed' || data.status.startsWith('error') || data.status === 'idle') {
+            if (valuationPollInterval) {
+                clearInterval(valuationPollInterval);
+                valuationPollInterval = null;
+            }
+            if (btn) btn.disabled = false;
+            
+            if (data.status === 'completed') {
+                setTimeout(() => {
+                    if (container) container.style.display = 'none';
+                    fetchDashboardStats();
+                    loadCollectibles();
+                }, 1500);
+            }
+        }
+    } catch (err) {
+        console.error('Error polling valuation status:', err);
     }
 }
 
