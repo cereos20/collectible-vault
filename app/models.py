@@ -1,7 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, JSON, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 class CollectibleItem(Base):
     __tablename__ = "collectibles"
@@ -17,8 +20,8 @@ class CollectibleItem(Base):
     barcode = Column(String(100), nullable=True, index=True)
     metadata_json = Column(JSON, default=dict)  # Flexible category fields e.g., issue_number, box_number, publisher, location, status, etc.
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     valuation_history = relationship("ValuationHistory", back_populates="item", cascade="all, delete-orphan")
     price_history = relationship("PriceHistory", back_populates="item", cascade="all, delete-orphan")
@@ -30,7 +33,7 @@ class ValuationHistory(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     item_id = Column(Integer, ForeignKey("collectibles.id"), nullable=False)
     value = Column(Float, nullable=False)
-    recorded_at = Column(DateTime, default=datetime.utcnow)
+    recorded_at = Column(DateTime, default=utc_now)
     source = Column(String(100), default="eBay Comps")
 
     item = relationship("CollectibleItem", back_populates="valuation_history")
@@ -43,7 +46,7 @@ class PriceHistory(Base):
     item_id = Column(Integer, ForeignKey("collectibles.id"), nullable=False)
     price = Column(Float, nullable=False)
     source = Column(String(100), default="eBay Sold Comps")
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
 
     item = relationship("CollectibleItem", back_populates="price_history")
 
@@ -57,4 +60,15 @@ class WatchlistItem(Base):
     min_grade = Column(String(50), default="Near Mint")
     target_price = Column(Float, default=0.0)
     upc = Column(String(100), nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+
+
+class PortfolioSnapshot(Base):
+    __tablename__ = "portfolio_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    total_items = Column(Integer, nullable=False)
+    total_invested = Column(Float, nullable=False)
+    current_vault_value = Column(Float, nullable=False)
+    total_profit_loss = Column(Float, nullable=False)
+    recorded_at = Column(DateTime, default=utc_now)

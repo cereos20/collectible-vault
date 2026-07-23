@@ -1,7 +1,12 @@
 import os
+import csv
+import io
 import logging
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, Query
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +14,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.database import get_db, init_db
-from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem
+from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem, PortfolioSnapshot
 from app.schemas import (
     CollectibleCreate,
     CollectibleUpdate,
@@ -29,10 +34,21 @@ from app.services.llm import check_ollama_status, set_active_model, get_active_m
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vault")
 
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    init_db()
+    db = next(get_db())
+    try:
+        seed_sample_data_if_empty(db)
+    finally:
+        db.close()
+    yield
+
 app = FastAPI(
     title="Universal Collectibles Vault API",
     description="Containerized open-source self-hosted collectibles tracker with camera intake, local vision AI, and FastMCP integration.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS configuration
@@ -54,21 +70,10 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
-@app.on_event("startup")
-def on_startup():
-    init_db()
-    db = next(get_db())
-    try:
-        seed_sample_data_if_empty(db)
-    finally:
-        db.close()
-
-
 @app.get("/")
 def render_dashboard(request: Request):
     """Renders the main single-page web dashboard."""
     return templates.TemplateResponse(request=request, name="index.html")
-
 
 
 # --- INTAKE ENDPOINTS ---
@@ -164,7 +169,6 @@ def list_collectibles(
 
     items = query.all()
 
-    # Calculate profit/loss helper
     result = []
     for item in items:
         resp = CollectibleResponse.from_orm(item)
@@ -175,7 +179,6 @@ def list_collectibles(
         )
         result.append(resp)
 
-    # Sorting
     if sort_by == "value_desc":
         result.sort(key=lambda x: x.current_market_value, reverse=True)
     elif sort_by == "gain_desc":
@@ -196,7 +199,6 @@ def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(item)
 
-    # Initial valuation history entry
     val_history = ValuationHistory(
         item_id=item.id,
         value=item.current_market_value,
@@ -234,13 +236,11 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
 
     update_data = item_in.dict(exclude_unset=True)
 
-    # Handle alias edit field mappings (grade -> condition_grade, cost_basis -> purchase_price)
     if "grade" in update_data and update_data["grade"] is not None:
         update_data["condition_grade"] = update_data.pop("grade")
     if "cost_basis" in update_data and update_data["cost_basis"] is not None:
         update_data["purchase_price"] = update_data.pop("cost_basis")
 
-    # Update metadata fields (issue_number, location, status)
     meta = dict(item.metadata_json or {})
     for meta_key in ["issue_number", "location", "status"]:
         if meta_key in update_data:
@@ -249,7 +249,6 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
                 meta[meta_key] = val
     item.metadata_json = meta
 
-    # Check if market value updated to log history
     if "current_market_value" in update_data and update_data["current_market_value"] != item.current_market_value:
         vh = ValuationHistory(
             item_id=item.id,
@@ -279,6 +278,65 @@ def delete_collectible(item_id: int, db: Session = Depends(get_db)):
     db.delete(item)
     db.commit()
     return {"status": "success", "message": f"Deleted item {item_id}"}
+
+
+# --- BULK EXPORT ENDPOINTS ---
+
+@app.get("/api/export/csv")
+def export_vault_csv(db: Session = Depends(get_db)):
+    """Exports all vault items to a downloadable CSV spreadsheet."""
+    items = db.query(CollectibleItem).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "ID", "Title", "Category", "Condition Grade", "Purchase Price",
+        "Current Market Value", "Net Profit/Loss", "Barcode", "Notes", "Created At"
+    ])
+
+    for i in items:
+        profit = round(i.current_market_value - i.purchase_price, 2)
+        created_str = i.created_at.strftime("%Y-%m-%d %H:%M:%S") if i.created_at else ""
+        writer.writerow([
+            i.id, i.title, i.category, i.condition_grade or "",
+            f"{i.purchase_price:.2f}", f"{i.current_market_value:.2f}",
+            f"{profit:.2f}", i.barcode or "", i.notes or "", created_str
+        ])
+
+    output.seek(0)
+    filename = f"collectible_vault_export_{datetime.now().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.get("/api/export/json")
+def export_vault_json(db: Session = Depends(get_db)):
+    """Exports all vault items to a formatted JSON data backup."""
+    items = db.query(CollectibleItem).all()
+    data = []
+    for i in items:
+        data.append({
+            "id": i.id,
+            "title": i.title,
+            "category": i.category,
+            "condition_grade": i.condition_grade,
+            "purchase_price": i.purchase_price,
+            "current_market_value": i.current_market_value,
+            "profit_loss": round(i.current_market_value - i.purchase_price, 2),
+            "barcode": i.barcode,
+            "notes": i.notes,
+            "metadata_json": i.metadata_json or {},
+            "created_at": i.created_at.isoformat() if i.created_at else None
+        })
+
+    filename = f"collectible_vault_backup_{datetime.now().strftime('%Y%m%d')}.json"
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 # --- VALUATION & DASHBOARD STATS ---
