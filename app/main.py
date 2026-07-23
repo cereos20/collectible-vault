@@ -16,7 +16,7 @@ from sqlalchemy import desc
 
 from app.database import get_db, init_db, SessionLocal
 from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem, PortfolioSnapshot
-from app.routers import assistant
+from app.routers import assistant, settings
 from app.schemas import (
     CollectibleCreate,
     CollectibleUpdate,
@@ -165,6 +165,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 templates = Jinja2Templates(directory="templates")
 
 app.include_router(assistant.router)
+app.include_router(settings.router)
 
 
 @app.get("/")

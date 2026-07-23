@@ -882,3 +882,116 @@ async function sendAssistantMessage(promptText) {
     }
     chatBox.scrollTop = chatBox.scrollHeight;
 }
+
+
+// --- AI ENDPOINT SETTINGS MODAL ---
+async function openAiSettingsModal() {
+    const input = document.getElementById('ollamaHostInput');
+    const resultBox = document.getElementById('ollamaTestResult');
+    if (resultBox) {
+        resultBox.style.display = 'none';
+        resultBox.innerHTML = '';
+    }
+
+    try {
+        const res = await fetch('/api/settings/ollama');
+        if (res.ok) {
+            const data = await res.json();
+            if (input && data.ollama_host) {
+                input.value = data.ollama_host;
+            }
+        }
+    } catch (err) {
+        console.error('Failed to fetch Ollama settings:', err);
+    }
+
+    openModal('aiSettingsModal');
+}
+
+async function testOllamaHostConnection() {
+    const input = document.getElementById('ollamaHostInput');
+    const resultBox = document.getElementById('ollamaTestResult');
+    const targetHost = input ? input.value.trim() : '';
+
+    if (!targetHost) {
+        alert('Please enter an Ollama Host URL to test.');
+        return;
+    }
+
+    if (resultBox) {
+        resultBox.style.display = 'block';
+        resultBox.style.background = 'rgba(0,0,0,0.3)';
+        resultBox.style.color = '#ffffff';
+        resultBox.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Testing connection to <code>${escapeHtml(targetHost)}</code>...`;
+    }
+
+    try {
+        const res = await fetch('/api/settings/test-host', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ollama_host: targetHost })
+        });
+        const data = await res.json();
+
+        if (resultBox) {
+            if (data.online) {
+                resultBox.style.background = 'rgba(46, 204, 113, 0.15)';
+                resultBox.style.borderColor = 'rgba(46, 204, 113, 0.4)';
+                resultBox.innerHTML = `
+                    <div style="color: #2ecc71; font-weight: 600; font-size: 0.9rem;">
+                        <i class="fas fa-check-circle"></i> ${escapeHtml(data.message)}
+                    </div>
+                    <div style="color: var(--text-muted); margin-top: 0.3rem; font-size: 0.8rem;">
+                        Installed Models: ${data.models ? data.models.map(m => escapeHtml(m)).join(', ') : 'None'}
+                    </div>`;
+            } else {
+                resultBox.style.background = 'rgba(231, 76, 60, 0.15)';
+                resultBox.style.borderColor = 'rgba(231, 76, 60, 0.4)';
+                resultBox.innerHTML = `
+                    <div style="color: #e74c3c; font-weight: 600; font-size: 0.9rem;">
+                        <i class="fas fa-exclamation-triangle"></i> ${escapeHtml(data.message)}
+                    </div>
+                    <div style="color: var(--text-muted); margin-top: 0.3rem; font-size: 0.8rem;">
+                        Ensure Ollama is running and OLLAMA_ORIGINS is set to allow connections.
+                    </div>`;
+            }
+        }
+    } catch (err) {
+        if (resultBox) {
+            resultBox.style.background = 'rgba(231, 76, 60, 0.15)';
+            resultBox.style.borderColor = 'rgba(231, 76, 60, 0.4)';
+            resultBox.innerHTML = `<div style="color: #e74c3c; font-weight:600;"><i class="fas fa-exclamation-triangle"></i> Connection Error: ${escapeHtml(err.message)}</div>`;
+        }
+    }
+}
+
+async function saveOllamaHostSetting() {
+    const input = document.getElementById('ollamaHostInput');
+    const targetHost = input ? input.value.trim() : '';
+
+    if (!targetHost) {
+        alert('Ollama Host URL cannot be empty.');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/settings/ollama', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ ollama_host: targetHost })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.status === 'success') {
+            closeModal('aiSettingsModal');
+            // Refresh LLM status and models dropdown immediately
+            await fetchLlmStatus();
+            alert(`Ollama Host Endpoint saved: ${data.ollama_host}`);
+        } else {
+            alert(`Failed to save settings: ${data.detail || 'Unknown error'}`);
+        }
+    } catch (err) {
+        alert(`Error saving Ollama Host endpoint: ${err.message}`);
+    }
+}
+

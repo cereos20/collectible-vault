@@ -52,6 +52,9 @@
                 <select id="llmModelSelect" class="form-select llm-model-select" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; width: auto; background: rgba(0,0,0,0.4);" title="Select Active LLM Model">
                     <option value="">Loading Models...</option>
                 </select>
+                <button class="btn btn-secondary" onclick="openAiSettingsModal()" title="Configure Ollama Host Endpoint URL" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem;">
+                    <i class="fas fa-cog"></i> ⚙️ AI Settings
+                </button>
             </div>
 
             <button class="btn btn-secondary" id="btnExportCsv" onclick="exportVaultCsv()" title="Export vault to CSV">
@@ -445,6 +448,43 @@
 
             <div id="watchlistContainer">
                 <!-- Dynamically populated via app.js -->
+            </div>
+        </div>
+    </div>
+
+    <!-- AI SETTINGS MODAL -->
+    <div class="modal-overlay" id="aiSettingsModal">
+        <div class="modal-content glass-panel" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3 style="margin:0; display:flex; align-items:center; gap:0.5rem; color:#ffffff;">
+                    <i class="fas fa-sliders-h"></i> ⚙️ AI Endpoint Settings
+                </h3>
+                <button class="modal-close" onclick="closeModal('aiSettingsModal')">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 1.2rem 0;">
+                <div class="form-group">
+                    <label for="ollamaHostInput" style="font-weight:600; margin-bottom:0.4rem; display:block; color:var(--text-light);">
+                        <i class="fas fa-network-wired"></i> Ollama Base Host Endpoint URL
+                    </label>
+                    <input type="text" id="ollamaHostInput" class="form-input" placeholder="http://192.168.86.54:11434" value="http://localhost:11434">
+                    <small style="color:var(--text-muted); display:block; margin-top:0.4rem; font-size:0.8rem;">
+                        Specify base HTTP/HTTPS URL of your local or remote Ollama server (e.g. <code>http://192.168.86.54:11434</code> or <code>http://localhost:11434</code>).
+                    </small>
+                </div>
+
+                <div id="ollamaTestResult" style="margin-top: 1rem; padding: 0.8rem; border-radius: 8px; font-size: 0.85rem; display: none; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);">
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+                <button class="btn btn-secondary" id="btnTestOllamaHost" onclick="testOllamaHostConnection()">
+                    <i class="fas fa-plug"></i> Test Connection
+                </button>
+                <div style="display:flex; gap:0.5rem;">
+                    <button class="btn btn-secondary" onclick="closeModal('aiSettingsModal')">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveOllamaHostSetting()">
+                        <i class="fas fa-save"></i> Save Endpoint
+                    </button>
+                </div>
             </div>
         </div>
     </div>

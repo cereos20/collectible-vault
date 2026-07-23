@@ -5,7 +5,7 @@ import httpx
 import logging
 from typing import Dict, Any
 
-from app.services.llm import get_active_model, OLLAMA_HOST
+from app.services.llm import get_active_model, get_ollama_host
 
 logger = logging.getLogger("vault.vision")
 
@@ -52,7 +52,7 @@ async def analyze_collectible_image(image_bytes: bytes, filename: str = "upload.
 
     try:
         async with httpx.AsyncClient(timeout=12.0) as client:
-            response = await client.post(f"{OLLAMA_HOST}/api/generate", json=payload)
+            response = await client.post(f"{get_ollama_host()}/api/generate", json=payload)
             if response.status_code == 200:
                 raw_text = response.json().get("response", "")
                 # Clean up any potential markdown backticks from LLM output

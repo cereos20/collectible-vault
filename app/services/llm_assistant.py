@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from app.models import CollectibleItem
-from app.services.llm import OLLAMA_HOST, get_active_model
+from app.services.llm import get_ollama_host, get_active_model
 
 logger = logging.getLogger("vault.assistant")
 
@@ -22,7 +22,7 @@ async def fetch_installed_models() -> List[str]:
     Fetches the list of installed model tag names from Ollama via GET /api/tags.
     Returns list of model names like ['gemma4:12b-it-q4', 'qwen2-vl:latest', 'llama3:8b'].
     """
-    url = f"{OLLAMA_HOST}/api/tags"
+    url = f"{get_ollama_host()}/api/tags"
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(url)
@@ -203,7 +203,8 @@ async def query_vault_assistant(
     }
 
     # Attempt Ollama API call with normalized model tag
-    url = f"{OLLAMA_HOST}/api/generate"
+    host = get_ollama_host()
+    url = f"{host}/api/generate"
     payload = {
         "model": target_model,
         "prompt": full_prompt,
@@ -228,7 +229,7 @@ async def query_vault_assistant(
             else:
                 logger.warning(f"Ollama returned HTTP {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        logger.warning(f"Ollama API connection failed ({OLLAMA_HOST}): {e}")
+        logger.warning(f"Ollama API connection failed ({host}): {e}")
 
     # Conversational fallback using actual vault data
     fallback_text = _generate_conversational_fallback(user_prompt, ctx)

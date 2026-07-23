@@ -5,11 +5,28 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger("vault.llm")
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+# Global in-memory Ollama host & model configuration
+_ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2-vl")
-
-# Global in-memory active model preference
 _active_model: str = DEFAULT_MODEL
+
+
+def get_ollama_host() -> str:
+    """Returns the currently configured Ollama base host URL (without trailing slash)."""
+    global _ollama_host
+    return _ollama_host.strip().rstrip("/")
+
+
+def set_ollama_host(host_url: str) -> str:
+    """Updates the configured Ollama base host URL."""
+    global _ollama_host
+    if host_url and host_url.strip():
+        clean_url = host_url.strip().rstrip("/")
+        if not clean_url.startswith("http://") and not clean_url.startswith("https://"):
+            clean_url = f"http://{clean_url}"
+        _ollama_host = clean_url
+        logger.info(f"Configured Ollama Host updated to: {_ollama_host}")
+    return get_ollama_host()
 
 
 def get_active_model() -> str:
@@ -29,10 +46,11 @@ def set_active_model(model_name: str) -> str:
 
 async def check_ollama_status() -> Dict[str, Any]:
     """
-    Pings {OLLAMA_HOST}/api/tags with a 3-second timeout.
+    Pings {get_ollama_host()}/api/tags with a 3-second timeout.
     Returns status ('online' | 'offline'), active model, and list of installed full tag model names.
     """
-    url = f"{OLLAMA_HOST}/api/tags"
+    host = get_ollama_host()
+    url = f"{host}/api/tags"
     current_model = get_active_model()
 
     try:
@@ -57,15 +75,15 @@ async def check_ollama_status() -> Dict[str, Any]:
                     "status": "online",
                     "active_model": current_model,
                     "models": models_list,
-                    "host": OLLAMA_HOST
+                    "host": host
                 }
     except Exception as e:
-        logger.warning(f"Ollama health check failed for host '{OLLAMA_HOST}': {e}")
+        logger.warning(f"Ollama health check failed for host '{host}': {e}")
 
     return {
         "status": "offline",
         "active_model": current_model,
         "models": [current_model, "qwen2-vl:latest", "gemma4:12b-it-q4"],
-        "host": OLLAMA_HOST,
+        "host": host,
         "troubleshooting": "Check OLLAMA_HOST IP or OLLAMA_ORIGINS cors settings on Windows VM."
     }
