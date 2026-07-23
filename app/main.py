@@ -1,11 +1,12 @@
 import os
 import csv
 import io
+import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
-from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, Query
+from typing import Optional, List, Dict, Any
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Request, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from app.database import get_db, init_db
+from app.database import get_db, init_db, SessionLocal
 from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem, PortfolioSnapshot
 from app.schemas import (
     CollectibleCreate,
@@ -24,15 +25,48 @@ from app.schemas import (
     DashboardStatsResponse,
     SelectModelRequest,
     WatchlistCreate,
-    WatchlistResponse
+    WatchlistResponse,
+    PortfolioSnapshotResponse,
+    ValuationStatusResponse
 )
 from app.vision_ai import analyze_collectible_image
-from app.valuation import lookup_barcode_data, refresh_all_valuations, seed_sample_data_if_empty
+from app.valuation import lookup_barcode_data, fetch_ebay_sold_comps, refresh_all_valuations, seed_sample_data_if_empty
 from app.importers.xml_importer import import_comics_from_xml
 from app.services.llm import check_ollama_status, set_active_model, get_active_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vault")
+
+# Global thread-safe background job state for async valuation queue
+_valuation_job_state: Dict[str, Any] = {
+    "status": "idle",
+    "total_items": 0,
+    "processed_items": 0,
+    "progress_percentage": 0.0,
+    "last_completed": None
+}
+
+
+def record_portfolio_snapshot(db: Session) -> PortfolioSnapshot:
+    """Helper to compute and save a vault portfolio snapshot."""
+    items = db.query(CollectibleItem).all()
+    total_items = len(items)
+    total_invested = round(sum(item.purchase_price for item in items), 2)
+    vault_value = round(sum(item.current_market_value for item in items), 2)
+    net_profit = round(vault_value - total_invested, 2)
+
+    snapshot = PortfolioSnapshot(
+        total_items=total_items,
+        total_invested=total_invested,
+        current_vault_value=vault_value,
+        total_profit_loss=net_profit,
+        recorded_at=datetime.now(timezone.utc)
+    )
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
+
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
@@ -40,6 +74,7 @@ async def lifespan(app_instance: FastAPI):
     db = next(get_db())
     try:
         seed_sample_data_if_empty(db)
+        record_portfolio_snapshot(db)
     finally:
         db.close()
     yield
@@ -124,7 +159,10 @@ async def import_comics_xml(file: UploadFile = File(...), db: Session = Depends(
             "errors": ["Uploaded XML file is empty."]
         }
 
-    return import_comics_from_xml(db, contents)
+    res = import_comics_from_xml(db, contents)
+    if res.get("imported_count", 0) > 0:
+        record_portfolio_snapshot(db)
+    return res
 
 
 # --- LLM SERVICE ENDPOINTS ---
@@ -193,7 +231,7 @@ def list_collectibles(
 
 @app.post("/api/items", response_model=CollectibleResponse, status_code=201)
 def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)):
-    """Saves a new collectible item into the vault and records initial valuation history."""
+    """Saves a new collectible item into the vault and records initial valuation history & snapshot."""
     item = CollectibleItem(**item_in.model_dump())
     db.add(item)
     db.commit()
@@ -206,6 +244,8 @@ def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)
     )
     db.add(val_history)
     db.commit()
+
+    record_portfolio_snapshot(db)
     db.refresh(item)
 
     resp = CollectibleResponse.model_validate(item)
@@ -262,6 +302,7 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
             setattr(item, field, val)
 
     db.commit()
+    record_portfolio_snapshot(db)
     db.refresh(item)
     
     resp = CollectibleResponse.model_validate(item)
@@ -277,6 +318,7 @@ def delete_collectible(item_id: int, db: Session = Depends(get_db)):
 
     db.delete(item)
     db.commit()
+    record_portfolio_snapshot(db)
     return {"status": "success", "message": f"Deleted item {item_id}"}
 
 
@@ -339,12 +381,109 @@ def export_vault_json(db: Session = Depends(get_db)):
     )
 
 
+# --- PORTFOLIO ANALYTICS ENDPOINTS ---
+
+@app.get("/api/analytics/portfolio-history", response_model=List[PortfolioSnapshotResponse])
+def get_portfolio_history(days: int = Query(90, ge=1, le=365), db: Session = Depends(get_db)):
+    """Returns historical daily portfolio snapshots for UI growth charts."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    snapshots = db.query(PortfolioSnapshot).filter(PortfolioSnapshot.recorded_at >= cutoff).order_by(PortfolioSnapshot.recorded_at.asc()).all()
+
+    result = []
+    for s in snapshots:
+        resp = PortfolioSnapshotResponse.model_validate(s)
+        resp.date = s.recorded_at.strftime("%Y-%m-%d") if s.recorded_at else ""
+        result.append(resp)
+    return result
+
+
 # --- VALUATION & DASHBOARD STATS ---
+
+def _run_async_valuation_task():
+    global _valuation_job_state
+    _valuation_job_state["status"] = "running"
+    _valuation_job_state["processed_items"] = 0
+
+    db = SessionLocal()
+    try:
+        items = db.query(CollectibleItem).all()
+        total = len(items)
+        _valuation_job_state["total_items"] = total
+
+        for idx, item in enumerate(items):
+            if idx > 0:
+                time.sleep(0.5)
+            new_val = fetch_ebay_sold_comps(
+                title=item.title,
+                category=item.category,
+                current_val=item.current_market_value,
+                condition_grade=item.condition_grade,
+                barcode=item.barcode
+            )
+            item.current_market_value = new_val
+            db.commit()
+
+            processed = idx + 1
+            _valuation_job_state["processed_items"] = processed
+            _valuation_job_state["progress_percentage"] = round(((processed / total) * 100) if total > 0 else 100.0, 1)
+
+        record_portfolio_snapshot(db)
+        _valuation_job_state["status"] = "completed"
+        _valuation_job_state["last_completed"] = datetime.now(timezone.utc).isoformat()
+    except Exception as e:
+        logger.error(f"[ASYNC VALUATION ERROR] {e}")
+        _valuation_job_state["status"] = f"error: {str(e)}"
+    finally:
+        db.close()
+
+
+@app.post("/api/valuation/refresh-async")
+def trigger_async_valuation(background_tasks: BackgroundTasks):
+    """Enqueues non-blocking batch market valuation processing in background tasks."""
+    global _valuation_job_state
+    if _valuation_job_state["status"] == "running":
+        return {
+            "status": "already_running",
+            "message": "Batch valuation refresh is already running in background.",
+            "job": _valuation_job_state
+        }
+
+    background_tasks.add_task(_run_async_valuation_task)
+    return {
+        "status": "queued",
+        "message": "Background valuation refresh started successfully."
+    }
+
+
+@app.get("/api/valuation/status", response_model=ValuationStatusResponse)
+def get_valuation_status():
+    """Polls live status and progress percentage of background valuation refresh job."""
+    global _valuation_job_state
+    total = _valuation_job_state.get("total_items", 0)
+    processed = _valuation_job_state.get("processed_items", 0)
+    status_str = _valuation_job_state.get("status", "idle")
+    
+    if status_str == "completed":
+        progress = 100.0
+    elif total > 0:
+        progress = round((processed / total) * 100, 1)
+    else:
+        progress = 0.0
+
+    return ValuationStatusResponse(
+        status=status_str,
+        total_items=total,
+        processed_items=processed,
+        progress_percentage=progress,
+        last_completed=_valuation_job_state.get("last_completed")
+    )
+
 
 @app.post("/api/valuation/refresh")
 def trigger_valuation_refresh(db: Session = Depends(get_db)):
     """Triggers live market sold comps analysis across all items."""
     updates = refresh_all_valuations(db)
+    record_portfolio_snapshot(db)
     return {
         "status": "success",
         "items_updated": len(updates),

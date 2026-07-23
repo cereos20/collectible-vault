@@ -34,3 +34,37 @@ def test_export_vault_json():
     data = response.json()
     assert isinstance(data, list)
     assert any(item["title"] == "Thor #337 (1st Beta Ray Bill)" for item in data)
+
+
+def test_portfolio_analytics_history():
+    # Fetch portfolio growth snapshots
+    response = client.get("/api/analytics/portfolio-history?days=90")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+    snapshot = data[0]
+    assert "total_items" in snapshot
+    assert "current_vault_value" in snapshot
+    assert "date" in snapshot
+
+
+def test_async_valuation_queue_and_status():
+    # Check initial status
+    status_resp = client.get("/api/valuation/status")
+    assert status_resp.status_code == 200
+    initial_status = status_resp.json()
+    assert "status" in initial_status
+    assert "progress_percentage" in initial_status
+
+    # Trigger async valuation
+    trigger_resp = client.post("/api/valuation/refresh-async")
+    assert trigger_resp.status_code == 200
+    res_data = trigger_resp.json()
+    assert res_data["status"] in ["queued", "already_running"]
+
+    # Poll status after trigger
+    poll_resp = client.get("/api/valuation/status")
+    assert poll_resp.status_code == 200
+    poll_data = poll_resp.json()
+    assert poll_data["status"] in ["running", "completed", "idle"]

@@ -114,3 +114,23 @@ class WatchlistResponse(WatchlistBase):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PortfolioSnapshotResponse(BaseModel):
+    id: int
+    total_items: int
+    total_invested: float
+    current_vault_value: float
+    total_profit_loss: float
+    recorded_at: datetime
+    date: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ValuationStatusResponse(BaseModel):
+    status: str
+    total_items: int
+    processed_items: int
+    progress_percentage: float = 0.0
+    last_completed: Optional[str] = None
