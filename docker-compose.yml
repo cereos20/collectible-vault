@@ -13,6 +13,8 @@ services:
       - DATABASE_URL=sqlite:///./data/vault.db
       - OLLAMA_HOST=http://ollama-vision:11434
       - OLLAMA_MODEL=qwen2-vl
+      - EBAY_CLIENT_ID=${EBAY_CLIENT_ID}
+      - EBAY_CLIENT_SECRET=${EBAY_CLIENT_SECRET}
     volumes:
       - vault-data:/app/data
     networks:
@@ -27,6 +29,8 @@ services:
     command: python mcp_server.py
     environment:
       - DATABASE_URL=sqlite:///./data/vault.db
+      - EBAY_CLIENT_ID=${EBAY_CLIENT_ID}
+      - EBAY_CLIENT_SECRET=${EBAY_CLIENT_SECRET}
     volumes:
       - vault-data:/app/data
     networks:

@@ -1,4 +1,20 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .pytest_cache/
+
+# Environment files & Secrets
+.env
+.env.*
+!.env.example
+
+# Database files
 *.db
+*.sqlite
+*.sqlite3
+data/
+vault-data/
+
+# Log files
+*.log
