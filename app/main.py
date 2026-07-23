@@ -69,12 +69,33 @@ def record_portfolio_snapshot(db: Session) -> PortfolioSnapshot:
     return snapshot
 
 
+def backfill_key_issues(db: Session) -> Dict[str, Any]:
+    """
+    Iterates over all CollectibleItem records in vault.db, evaluates them with detect_key_issue(),
+    and updates is_key_issue and key_reasons fields in place.
+    """
+    items = db.query(CollectibleItem).all()
+    updated_count = 0
+    for item in items:
+        is_key, reasons = detect_key_issue(item.title, item.notes)
+        if item.is_key_issue != is_key or item.key_reasons != reasons:
+            item.is_key_issue = is_key
+            item.key_reasons = reasons
+            updated_count += 1
+
+    if updated_count > 0:
+        db.commit()
+
+    return {"total_items": len(items), "updated_items": updated_count}
+
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     init_db()
     db = next(get_db())
     try:
         seed_sample_data_if_empty(db)
+        backfill_key_issues(db)
         record_portfolio_snapshot(db)
     finally:
         db.close()
@@ -244,6 +265,17 @@ def get_key_issues(db: Session = Depends(get_db)):
         )
         result.append(resp)
     return result
+
+
+@app.get("/api/admin/backfill-keys")
+def trigger_backfill_key_issues(db: Session = Depends(get_db)):
+    """Triggers an on-demand database backfill to re-evaluate and tag all key issues in vault.db."""
+    summary = backfill_key_issues(db)
+    return {
+        "status": "success",
+        "message": "Key issues backfilled successfully",
+        "summary": summary
+    }
 
 
 @app.post("/api/items", response_model=CollectibleResponse, status_code=201)
