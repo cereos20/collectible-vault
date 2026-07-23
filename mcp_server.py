@@ -189,5 +189,10 @@ def refresh_vault_valuations() -> str:
         db.close()
 
 
+import os
+
 if __name__ == "__main__":
-    mcp.run()
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    port = int(os.getenv("MCP_PORT", "8001"))
+    logger.info(f"Starting FastMCP Server with SSE transport on {host}:{port}...")
+    mcp.run(transport="sse", host=host, port=port)

@@ -28,10 +28,14 @@ services:
     container_name: collectible-vault-mcp
     restart: unless-stopped
     command: python mcp_server.py
+    ports:
+      - "8001:8001"
     environment:
       - DATABASE_URL=sqlite:///./data/vault.db
       - EBAY_CLIENT_ID=${EBAY_CLIENT_ID}
       - EBAY_CLIENT_SECRET=${EBAY_CLIENT_SECRET}
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8001
     volumes:
       - vault-data:/app/data
       - ./uploads:/app/uploads
