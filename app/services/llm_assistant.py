@@ -1,7 +1,8 @@
 import os
+import re
 import httpx
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from app.models import CollectibleItem
@@ -73,12 +74,36 @@ def normalize_model_tag(requested_model: str, installed_models: List[str]) -> st
     return installed_models[0]
 
 
-def _build_vault_context(db: Optional[Session]) -> Dict[str, Any]:
-    """Extracts portfolio summary metrics and top items from vault.db."""
+def _extract_search_tokens(user_prompt: str) -> List[str]:
+    """Extracts search keywords and tokens from the user prompt."""
+    prompt_lower = user_prompt.lower()
+    stop_words = {
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "up", "about", "into", "over", "after",
+        "what", "where", "when", "how", "who", "which", "why", "show", "list",
+        "my", "me", "i", "your", "are", "is", "was", "were", "be", "have", "has",
+        "had", "do", "does", "did", "top", "all", "get", "find", "tell", "give",
+        "many", "much", "valuable", "items", "item", "vault", "collection"
+    }
+
+    words = re.findall(r'\b[a-zA-Z0-9\'-]+\b', prompt_lower)
+    return [w for w in words if w not in stop_words and len(w) > 1]
+
+
+def _build_vault_context(user_prompt: str = "", db: Optional[Session] = None) -> Dict[str, Any]:
+    """
+    Extracts portfolio summary metrics, category totals breakdown, and
+    intent-aware matching items from vault.db based on keywords in user_prompt.
+    """
     if not db:
-        return {"total_items": 0, "total_value": 0.0, "total_cost": 0.0,
-                "profit_loss": 0.0, "profit_pct": 0.0, "key_count": 0,
-                "top_items_str": "", "key_items_str": ""}
+        return {
+            "total_items": 0, "total_value": 0.0, "total_cost": 0.0,
+            "profit_loss": 0.0, "profit_pct": 0.0, "key_count": 0,
+            "category_summary_str": "No categories available.",
+            "top_items_str": "No items in vault.",
+            "key_items_str": "No key issues tagged.",
+            "relevant_items_str": "No matching items found."
+        }
 
     items = db.query(CollectibleItem).all()
     total_items = len(items)
@@ -89,7 +114,89 @@ def _build_vault_context(db: Optional[Session]) -> Dict[str, Any]:
     profit_loss = round(total_value - total_cost, 2)
     profit_pct = round((profit_loss / total_cost * 100) if total_cost > 0 else 0.0, 1)
 
-    # Top 10 by market value
+    # Category totals breakdown
+    cat_counts: Dict[str, int] = {}
+    cat_values: Dict[str, float] = {}
+    for i in items:
+        cat = (i.category or "other").lower()
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        cat_values[cat] = round(cat_values.get(cat, 0.0) + (i.current_market_value or 0.0), 2)
+
+    cat_labels = {
+        "comic": "Comics",
+        "funko": "Funko Pops",
+        "figure": "Figures",
+        "action_figure": "Action Figures",
+        "trading_card": "Trading Cards",
+        "card": "Trading Cards",
+        "other": "Other Collectibles"
+    }
+
+    cat_parts = []
+    for cat_key, count in cat_counts.items():
+        label = cat_labels.get(cat_key, cat_key.capitalize())
+        val = cat_values.get(cat_key, 0.0)
+        cat_parts.append(f"{label}: {count} (${val:.2f})")
+
+    category_summary_str = ", ".join(cat_parts) if cat_parts else "No items in vault."
+
+    # Intent-aware item matching
+    prompt_lower = user_prompt.lower() if user_prompt else ""
+    tokens = _extract_search_tokens(user_prompt) if user_prompt else []
+
+    # Category keyword mapping
+    category_keywords = {
+        "comic": ["comic", "comics", "book", "books"],
+        "funko": ["funko", "funkos", "pop", "pops"],
+        "figure": ["figure", "figures", "action figure", "action figures", "toy", "toys"],
+        "action_figure": ["figure", "figures", "action figure", "action figures", "toy", "toys"],
+        "trading_card": ["card", "cards", "trading card", "pokemon", "pokémon", "tcg"]
+    }
+
+    matched_categories: Set[str] = set()
+    for cat, kw_list in category_keywords.items():
+        if any(kw in prompt_lower for kw in kw_list):
+            matched_categories.add(cat)
+
+    matching_items = []
+    for item in items:
+        item_title_lower = (item.title or "").lower()
+        item_cat_lower = (item.category or "").lower()
+        item_notes_lower = (item.notes or "").lower()
+        item_keys_lower = (item.key_reasons or "").lower()
+
+        # Check category match
+        is_cat_match = item_cat_lower in matched_categories
+
+        # Check token match across title, notes, key_reasons, category
+        is_token_match = any(
+            t in item_title_lower or t in item_notes_lower or t in item_keys_lower or t in item_cat_lower
+            for t in tokens
+        )
+
+        if is_cat_match or is_token_match:
+            matching_items.append(item)
+
+    # Sort matching items by market value descending
+    matching_items = sorted(matching_items, key=lambda x: x.current_market_value, reverse=True)[:25]
+
+    # If no specific matches found (or prompt is generic summary request), fallback to top valued items
+    if not matching_items:
+        matching_items = sorted(items, key=lambda x: x.current_market_value, reverse=True)[:15]
+
+    relevant_lines = []
+    for i in matching_items:
+        key_flag = f" [KEY: {i.key_reasons}]" if i.is_key_issue else ""
+        gain = round(i.current_market_value - i.purchase_price, 2)
+        relevant_lines.append(
+            f"- {i.title} ({i.category}): Value ${i.current_market_value:.2f}, "
+            f"Cost ${i.purchase_price:.2f}, Gain ${gain:+.2f}, "
+            f"Grade {i.condition_grade or 'Raw'}{key_flag}"
+        )
+
+    relevant_items_str = "\n".join(relevant_lines) or "No items found."
+
+    # Top 10 overall for general context
     top_10 = sorted(items, key=lambda x: x.current_market_value, reverse=True)[:10]
     top_items_lines = []
     for i in top_10:
@@ -101,7 +208,7 @@ def _build_vault_context(db: Optional[Session]) -> Dict[str, Any]:
             f"Grade {i.condition_grade or 'Raw'}{key_flag}"
         )
 
-    # Key issues specifically
+    # Key issues
     key_items_lines = []
     for k in sorted(key_items, key=lambda x: x.current_market_value, reverse=True)[:10]:
         gain = round(k.current_market_value - k.purchase_price, 2)
@@ -116,21 +223,27 @@ def _build_vault_context(db: Optional[Session]) -> Dict[str, Any]:
         "profit_loss": profit_loss,
         "profit_pct": profit_pct,
         "key_count": key_count,
+        "category_summary_str": category_summary_str,
         "top_items_str": "\n".join(top_items_lines) or "No items in vault.",
-        "key_items_str": "\n".join(key_items_lines) or "No key issues tagged."
+        "key_items_str": "\n".join(key_items_lines) or "No key issues tagged.",
+        "relevant_items_str": relevant_items_str
     }
 
 
 def _format_full_prompt(user_prompt: str, ctx: Dict[str, Any]) -> str:
-    """Combines system instruction, vault context, and user question into a single prompt."""
+    """Combines system instruction, vault context, category overview, and user question into a single prompt."""
     vault_context_block = f"""Vault Context:
 - Total Items: {ctx['total_items']}
 - Total Market Value: ${ctx['total_value']:.2f}
 - Total Capital Invested: ${ctx['total_cost']:.2f}
 - Net Profit/Loss: ${ctx['profit_loss']:+.2f} ({ctx['profit_pct']:+.1f}%)
 - Key Issues Count: {ctx['key_count']}
+- Category Breakdown: {ctx['category_summary_str']}
 
-Top Valued Items:
+Relevant Vault Items Matching Query:
+{ctx['relevant_items_str']}
+
+Top Valued Items in Vault:
 {ctx['top_items_str']}
 
 Key Issues:
@@ -147,11 +260,16 @@ def _generate_conversational_fallback(user_prompt: str, ctx: Dict[str, Any]) -> 
                 "but I can still help with your vault data.\n\n")
 
     if "spider" in user_lower or "spider-man" in user_lower:
-        # Pull actual Spider-Man items from top items string
-        spider_lines = [l for l in ctx["top_items_str"].split("\n") if "spider" in l.lower()]
+        spider_lines = [l for l in ctx["relevant_items_str"].split("\n") if "spider" in l.lower()]
         if spider_lines:
             return preamble + "Here are your Spider-Man items in the vault:\n" + "\n".join(spider_lines)
         return preamble + "I couldn't find any Spider-Man items in your vault right now."
+
+    elif "figure" in user_lower or "action figure" in user_lower or "toy" in user_lower:
+        fig_lines = [l for l in ctx["relevant_items_str"].split("\n") if "figure" in l.lower() or "kenner" in l.lower() or "boba" in l.lower()]
+        if fig_lines:
+            return preamble + "Here are your action figures in the vault:\n" + "\n".join(fig_lines)
+        return preamble + f"Here are relevant items in your vault:\n{ctx['relevant_items_str']}"
 
     elif "growth" in user_lower or "summary" in user_lower or "portfolio" in user_lower:
         sign = "+" if ctx["profit_loss"] >= 0 else ""
@@ -161,7 +279,8 @@ def _generate_conversational_fallback(user_prompt: str, ctx: Dict[str, Any]) -> 
                 f"• Capital Invested: ${ctx['total_cost']:.2f}\n"
                 f"• Current Market Value: ${ctx['total_value']:.2f}\n"
                 f"• Net Gain/Loss: {sign}${ctx['profit_loss']:.2f} ({sign}{ctx['profit_pct']:.1f}% ROI)\n"
-                f"• Key Issues Tagged: {ctx['key_count']}")
+                f"• Key Issues Tagged: {ctx['key_count']}\n"
+                f"• Category Breakdown: {ctx['category_summary_str']}")
 
     elif "key" in user_lower or "gained" in user_lower:
         return preamble + f"🔑 Key Issues in Your Vault ({ctx['key_count']} tagged):\n{ctx['key_items_str']}"
@@ -171,8 +290,8 @@ def _generate_conversational_fallback(user_prompt: str, ctx: Dict[str, Any]) -> 
         return (preamble +
                 f"Your vault contains {ctx['total_items']} items worth ${ctx['total_value']:.2f} "
                 f"(net {sign}${ctx['profit_loss']:.2f}, {sign}{ctx['profit_pct']:.1f}% ROI). "
-                f"You have {ctx['key_count']} verified key issues.\n\n"
-                f"Try asking about specific items, portfolio growth, or key issues!")
+                f"Categories: {ctx['category_summary_str']}.\n\n"
+                f"Here are relevant items matching your prompt:\n{ctx['relevant_items_str']}")
 
 
 async def query_vault_assistant(
@@ -193,13 +312,14 @@ async def query_vault_assistant(
     # 2. Normalize requested model against installed tags
     target_model = normalize_model_tag(raw_requested_model, installed_models)
 
-    ctx = _build_vault_context(db)
+    ctx = _build_vault_context(user_prompt, db)
     full_prompt = _format_full_prompt(user_prompt, ctx)
 
     context_summary = {
         "total_items": ctx["total_items"],
         "current_vault_value": ctx["total_value"],
-        "key_issues_count": ctx["key_count"]
+        "key_issues_count": ctx["key_count"],
+        "category_summary": ctx["category_summary_str"]
     }
 
     # Attempt Ollama API call with normalized model tag

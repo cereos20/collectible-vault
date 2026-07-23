@@ -82,3 +82,35 @@ def test_normalize_model_tag_fallback():
     assert normalize_model_tag("nonexistent_model", installed) == "gemma4:12b-it-q4"
     assert normalize_model_tag("custom", []) == "custom"
 
+
+from app.services.llm_assistant import _build_vault_context, _format_full_prompt
+
+def test_intent_aware_context_retrieval():
+    db = SessionLocal()
+    try:
+        # Create a specific action figure item
+        client.post("/api/items", json={
+            "title": "TMNT The Last Ronin Armored Action Figure",
+            "category": "figure",
+            "purchase_price": 35.0,
+            "current_market_value": 45.0,
+            "condition_grade": "Mint in Box",
+            "notes": "NECA Comic Convention Exclusive"
+        })
+
+        # Test context retrieval with keyword query "Last Ronin"
+        ctx = _build_vault_context("Show me my Last Ronin action figures", db)
+        assert "category_summary_str" in ctx
+        assert len(ctx["category_summary_str"]) > 0
+        assert "relevant_items_str" in ctx
+        assert "Last Ronin" in ctx["relevant_items_str"]
+
+        # Test full prompt formatting includes Category Breakdown and Relevant Items
+        full_prompt = _format_full_prompt("Show me my Last Ronin action figures", ctx)
+        assert "Category Breakdown:" in full_prompt
+        assert "Relevant Vault Items Matching Query:" in full_prompt
+        assert "TMNT The Last Ronin" in full_prompt
+    finally:
+        db.close()
+
+
