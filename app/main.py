@@ -443,6 +443,7 @@ def export_vault_json(db: Session = Depends(get_db)):
 # --- PORTFOLIO ANALYTICS ENDPOINTS ---
 
 @app.get("/api/analytics/portfolio-history", response_model=List[PortfolioSnapshotResponse])
+@app.get("/api/portfolio/history", response_model=List[PortfolioSnapshotResponse])
 def get_portfolio_history(days: int = Query(90, ge=1, le=365), db: Session = Depends(get_db)):
     """Returns historical daily portfolio snapshots for UI growth charts."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -551,6 +552,7 @@ def trigger_valuation_refresh(db: Session = Depends(get_db)):
 
 
 @app.get("/api/dashboard/stats", response_model=DashboardStatsResponse)
+@app.get("/api/stats", response_model=DashboardStatsResponse)
 def get_dashboard_stats(db: Session = Depends(get_db)):
     """Computes high-level aggregated vault stats."""
     items = db.query(CollectibleItem).all()
