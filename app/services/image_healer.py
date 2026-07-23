@@ -24,13 +24,37 @@ def get_fallback_badge(category: str) -> str:
 
 
 def is_missing_image(image_url: Optional[str]) -> bool:
-    """Checks whether an image_url is missing, empty, or placeholder."""
+    """Checks whether an image_url is missing, empty, broken, or a temporary blob URL."""
     if not image_url or not str(image_url).strip():
         return True
     url_str = str(image_url).strip().lower()
-    if url_str in ["none", "null", "undefined", "placeholder.png", "/static/images/placeholder.png"]:
+    if url_str.startswith("blob:") or url_str in ["none", "null", "undefined", "placeholder.png", "/static/images/placeholder.png"]:
         return True
     return False
+
+
+def purge_stored_blob_urls(db: Session) -> Dict[str, Any]:
+    """
+    Clears out all temporary/invalid 'blob:' image URLs stored in vault.db
+    and heals affected rows with static SVG category fallback badges.
+    """
+    items = db.query(CollectibleItem).all()
+    purged_count = 0
+
+    for item in items:
+        if is_missing_image(item.image_url):
+            item.image_url = get_fallback_badge(item.category)
+            purged_count += 1
+
+    if purged_count > 0:
+        db.commit()
+
+    logger.info(f"Purged {purged_count} invalid/blob image URLs from vault.db.")
+    return {
+        "status": "success",
+        "total_scanned": len(items),
+        "purged_count": purged_count
+    }
 
 
 def heal_single_item_image(item: CollectibleItem) -> bool:

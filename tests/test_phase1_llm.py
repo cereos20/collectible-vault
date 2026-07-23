@@ -147,3 +147,41 @@ def test_generate_portfolio_insights():
         assert endpoint_res.json()["status"] == "success"
     finally:
         db.close()
+
+
+def test_purge_stored_blob_urls():
+    from app.services.image_healer import purge_stored_blob_urls
+    from app.models import CollectibleItem
+    db = SessionLocal()
+    try:
+        # Create dummy item with a blob URL
+        blob_item = CollectibleItem(
+            title="Blob Image Test Item",
+            category="comic",
+            purchase_price=10.0,
+            current_market_value=15.0,
+            image_url="blob:http://localhost:8000/123456"
+        )
+        db.add(blob_item)
+        db.commit()
+        db.refresh(blob_item)
+
+        # Run purge
+        res = purge_stored_blob_urls(db)
+        assert res["status"] == "success"
+
+        # Verify DB entry was updated
+        db.refresh(blob_item)
+        assert not blob_item.image_url.startswith("blob:")
+        assert blob_item.image_url == "/static/images/badges/comic.svg"
+
+        # Verify API endpoint guard
+        ep_res = client.get(f"/api/items/{blob_item.id}")
+        assert ep_res.status_code == 200
+        assert not ep_res.json()["image_url"].startswith("blob:")
+
+        # Cleanup
+        db.delete(blob_item)
+        db.commit()
+    finally:
+        db.close()

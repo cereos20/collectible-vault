@@ -18,7 +18,13 @@ from sqlalchemy import desc
 from app.database import get_db, init_db, SessionLocal
 from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem, PortfolioSnapshot
 from app.routers import assistant, settings, intake
-from app.services.image_healer import heal_missing_item_images, heal_single_item_image
+from app.services.image_healer import (
+    heal_missing_item_images,
+    heal_single_item_image,
+    purge_stored_blob_urls,
+    is_missing_image,
+    get_fallback_badge
+)
 from app.services.llm_assistant import generate_item_market_summary
 from app.schemas import (
     CollectibleCreate,
@@ -132,6 +138,7 @@ async def lifespan(app_instance: FastAPI):
     db = next(get_db())
     try:
         seed_sample_data_if_empty(db)
+        purge_stored_blob_urls(db)
         backfill_key_issues(db)
         backfill_category_fixes(db)
         record_portfolio_snapshot(db)
@@ -273,16 +280,7 @@ def list_collectibles(
         query = query.filter(CollectibleItem.title.ilike(search_pattern) | CollectibleItem.notes.ilike(search_pattern))
 
     items = query.all()
-
-    result = []
-    for item in items:
-        resp = CollectibleResponse.model_validate(item)
-        resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
-        resp.profit_loss_percentage = round(
-            ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
-            if item.purchase_price > 0 else 0.0, 1
-        )
-        result.append(resp)
+    result = [build_collectible_response(item) for item in items]
 
     if sort_by == "value_desc":
         result.sort(key=lambda x: x.current_market_value, reverse=True)
@@ -300,16 +298,23 @@ def list_collectibles(
 def get_key_issues(db: Session = Depends(get_db)):
     """Filters exclusively for key issues in the vault."""
     items = db.query(CollectibleItem).filter(CollectibleItem.is_key_issue == True).all()
-    result = []
-    for item in items:
-        resp = CollectibleResponse.model_validate(item)
-        resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
-        resp.profit_loss_percentage = round(
-            ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
-            if item.purchase_price > 0 else 0.0, 1
-        )
-        result.append(resp)
-    return result
+    return [build_collectible_response(item) for item in items]
+
+
+def build_collectible_response(item: CollectibleItem) -> CollectibleResponse:
+    """
+    Constructs CollectibleResponse model with automatic image sanitization
+    for missing, broken, or temporary blob URLs.
+    """
+    resp = CollectibleResponse.model_validate(item)
+    if is_missing_image(resp.image_url):
+        resp.image_url = get_fallback_badge(item.category)
+    resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
+    resp.profit_loss_percentage = round(
+        ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
+        if item.purchase_price > 0 else 0.0, 1
+    )
+    return resp
 
 
 @app.get("/api/admin/backfill-keys")
@@ -338,6 +343,12 @@ def trigger_fix_categories(db: Session = Depends(get_db)):
 def trigger_heal_images(db: Session = Depends(get_db)):
     """Triggers an on-demand image healing run across all vault items."""
     return heal_missing_item_images(db)
+
+
+@app.get("/api/admin/purge-blobs")
+def trigger_purge_blobs(db: Session = Depends(get_db)):
+    """Purges invalid/blob image URLs from vault.db on demand."""
+    return purge_stored_blob_urls(db)
 
 
 def parse_natural_language_search(query_str: str, db: Session) -> List[CollectibleItem]:
@@ -409,16 +420,7 @@ def natural_language_search(q: str = Query("", alias="q"), db: Session = Depends
     into structured SQL queries and returns matching items.
     """
     items = parse_natural_language_search(q, db)
-    result = []
-    for item in items:
-        resp = CollectibleResponse.model_validate(item)
-        resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
-        resp.profit_loss_percentage = round(
-            ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
-            if item.purchase_price > 0 else 0.0, 1
-        )
-        result.append(resp)
-    return result
+    return [build_collectible_response(item) for item in items]
 
 
 @app.get("/api/items/{item_id}/market-summary")
@@ -462,9 +464,7 @@ def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)
     record_portfolio_snapshot(db)
     db.refresh(item)
 
-    resp = CollectibleResponse.model_validate(item)
-    resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
-    return resp
+    return build_collectible_response(item)
 
 
 @app.get("/api/items/{item_id}", response_model=CollectibleResponse)
@@ -473,13 +473,7 @@ def get_collectible(item_id: int, db: Session = Depends(get_db)):
     if not item:
         raise HTTPException(status_code=404, detail="Collectible item not found")
     
-    resp = CollectibleResponse.model_validate(item)
-    resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
-    resp.profit_loss_percentage = round(
-        ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
-        if item.purchase_price > 0 else 0.0, 1
-    )
-    return resp
+    return build_collectible_response(item)
 
 
 @app.put("/api/items/{item_id}", response_model=CollectibleResponse)
@@ -528,9 +522,7 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
     record_portfolio_snapshot(db)
     db.refresh(item)
     
-    resp = CollectibleResponse.model_validate(item)
-    resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
-    return resp
+    return build_collectible_response(item)
 
 
 @app.delete("/api/items/{item_id}")
