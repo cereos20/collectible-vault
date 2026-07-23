@@ -679,6 +679,10 @@ async function openEditModal(itemId) {
         document.getElementById('editLocation').value = meta.location || '';
         document.getElementById('editStatus').value = meta.status || 'In Vault';
         document.getElementById('editNotes').value = item.notes || '';
+        const keyToggle = document.getElementById('editKeyIssueToggle');
+        if (keyToggle) keyToggle.checked = !!item.is_key_issue;
+        const keyReasons = document.getElementById('editKeyReasons');
+        if (keyReasons) keyReasons.value = item.key_reasons || '';
 
         openModal('editModal');
     } catch (err) {
@@ -698,6 +702,8 @@ async function handleEditSubmit(e) {
         current_market_value: parseFloat(document.getElementById('editValue').value) || 0.0,
         location: document.getElementById('editLocation').value.trim(),
         status: document.getElementById('editStatus').value,
+        is_key_issue: document.getElementById('editKeyIssueToggle')?.checked || false,
+        key_reasons: document.getElementById('editKeyReasons')?.value.trim() || null,
         notes: document.getElementById('editNotes').value.trim()
     };
 
@@ -792,4 +798,81 @@ async function deleteWatchlistItem(id) {
     } catch (err) {
         alert('Delete failed: ' + err.message);
     }
+}
+
+// --- AI ASSISTANT SIDEBAR DRAWER ---
+function toggleAssistantDrawer() {
+    const drawer = document.getElementById('assistantDrawer');
+    const overlay = document.getElementById('assistantDrawerOverlay');
+    const modelSelect = document.getElementById('llmModelSelect');
+    const modelLabel = document.getElementById('assistantActiveModelLabel');
+
+    if (modelLabel && modelSelect) {
+        modelLabel.innerText = modelSelect.value ? `Active Model: ${modelSelect.value}` : 'FastMCP / Ollama';
+    }
+
+    if (drawer && overlay) {
+        drawer.classList.toggle('active');
+        overlay.classList.toggle('active');
+    }
+}
+
+function handleAssistantKeyPress(e) {
+    if (e.key === 'Enter') {
+        sendAssistantMessage();
+    }
+}
+
+function sendQuickPrompt(promptText) {
+    const input = document.getElementById('assistantInput');
+    if (input) input.value = promptText;
+    sendAssistantMessage(promptText);
+}
+
+async function sendAssistantMessage(promptText) {
+    const input = document.getElementById('assistantInput');
+    const msg = promptText || (input ? input.value.trim() : '');
+    if (!msg) return;
+
+    if (input) input.value = '';
+
+    const chatBox = document.getElementById('assistantChatBox');
+    if (!chatBox) return;
+
+    // Append User Bubble
+    const userBubble = document.createElement('div');
+    userBubble.className = 'chat-bubble user-bubble';
+    userBubble.innerText = msg;
+    chatBox.appendChild(userBubble);
+
+    // Append Loading Assistant Bubble
+    const loadingId = 'loading-' + Date.now();
+    const loadingBubble = document.createElement('div');
+    loadingBubble.className = 'chat-bubble assistant-bubble';
+    loadingBubble.id = loadingId;
+    loadingBubble.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Analyzing vault context...`;
+    chatBox.appendChild(loadingBubble);
+    chatBox.scrollTop = chatBox.scrollHeight;
+
+    const selectedModel = document.getElementById('llmModelSelect')?.value || '';
+
+    try {
+        const res = await fetch('/api/assistant/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ prompt: msg, model: selectedModel })
+        });
+        const data = await res.json();
+        
+        const loader = document.getElementById(loadingId);
+        if (loader) {
+            loader.innerText = data.response || 'No response generated.';
+        }
+    } catch (err) {
+        const loader = document.getElementById(loadingId);
+        if (loader) {
+            loader.innerText = `Error: ${err.message}`;
+        }
+    }
+    chatBox.scrollTop = chatBox.scrollHeight;
 }

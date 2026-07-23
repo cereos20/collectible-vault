@@ -16,6 +16,7 @@ from sqlalchemy import desc
 
 from app.database import get_db, init_db, SessionLocal
 from app.models import CollectibleItem, ValuationHistory, PriceHistory, WatchlistItem, PortfolioSnapshot
+from app.routers import assistant
 from app.schemas import (
     CollectibleCreate,
     CollectibleUpdate,
@@ -162,6 +163,8 @@ os.makedirs("templates", exist_ok=True)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 templates = Jinja2Templates(directory="templates")
+
+app.include_router(assistant.router)
 
 
 @app.get("/")
@@ -407,14 +410,18 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
         )
         db.add(vh)
 
+    manual_key_set = "is_key_issue" in update_data and update_data["is_key_issue"] is not None
+
     for field, val in update_data.items():
         if hasattr(item, field) and val is not None:
             setattr(item, field, val)
 
-    # Evaluate key issue status
-    is_key, key_reason = detect_key_issue(item.title, item.notes)
-    item.is_key_issue = is_key
-    item.key_reasons = key_reason
+    # Evaluate key issue status if user didn't explicitly set/override it
+    if not manual_key_set:
+        is_key, key_reason = detect_key_issue(item.title, item.notes)
+        item.is_key_issue = is_key
+        if is_key and not item.key_reasons:
+            item.key_reasons = key_reason
 
     db.commit()
     record_portfolio_snapshot(db)
