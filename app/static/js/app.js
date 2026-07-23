@@ -68,6 +68,40 @@ function initApp() {
 }
 
 function setupEventListeners() {
+    // Robust Event Target Delegation with Error Boundary
+    document.addEventListener('click', (e) => {
+        try {
+            const editBtn = e.target.closest('.edit-btn');
+            if (editBtn) {
+                const itemId = editBtn.dataset.id || editBtn.getAttribute('data-item-id');
+                if (itemId) {
+                    openEditModal(itemId);
+                }
+                return;
+            }
+
+            const valuationBtn = e.target.closest('.valuation-btn');
+            if (valuationBtn) {
+                const itemId = valuationBtn.dataset.id || valuationBtn.getAttribute('data-item-id');
+                if (itemId) {
+                    openHistoryModal(itemId);
+                }
+                return;
+            }
+
+            const categoryPill = e.target.closest('.filter-pills .pill');
+            if (categoryPill && categoryPill.dataset.category) {
+                document.querySelectorAll('.filter-pills .pill').forEach(p => p.classList.remove('active'));
+                categoryPill.classList.add('active');
+                currentCategory = categoryPill.dataset.category || 'all';
+                loadCollectibles();
+                return;
+            }
+        } catch (err) {
+            console.error('Error handling UI click event:', err);
+        }
+    });
+
     // Search input debounce
     const searchInput = document.getElementById('searchInput');
     if (searchInput) {
@@ -78,17 +112,6 @@ function setupEventListeners() {
             }, 300);
         });
     }
-
-    // Category pills filter
-    const pills = document.querySelectorAll('.filter-pills .pill');
-    pills.forEach(pill => {
-        pill.addEventListener('click', (e) => {
-            pills.forEach(p => p.classList.remove('active'));
-            pill.classList.add('active');
-            currentCategory = pill.dataset.category || 'all';
-            loadCollectibles();
-        });
-    });
 
     // Sort Selector
     const sortSelect = document.getElementById('sortSelect');
@@ -265,10 +288,10 @@ function renderCollectibleCard(item) {
         </div>
 
         <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
-            <button class="btn btn-secondary valuation-btn" style="flex:1; padding:0.4rem; font-size:0.8rem;" onclick="openHistoryModal(${item.id})">
+            <button class="btn btn-secondary valuation-btn" data-id="${item.id}" data-item-id="${item.id}" style="flex:1; padding:0.4rem; font-size:0.8rem;" onclick="openHistoryModal(${item.id})">
                 <i class="fas fa-chart-line"></i> Valuation
             </button>
-            <button class="btn btn-secondary edit-btn" style="padding:0.4rem 0.6rem; color:var(--accent-cyan);" onclick="openEditModal(${item.id})">
+            <button class="btn btn-secondary edit-btn" data-id="${item.id}" data-item-id="${item.id}" style="padding:0.4rem 0.6rem; color:var(--accent-cyan);" onclick="openEditModal(${item.id})">
                 <i class="fas fa-edit"></i> Edit
             </button>
             <button class="btn btn-secondary" style="padding:0.4rem 0.6rem; color:var(--accent-rose);" onclick="deleteCollectible(${item.id})">
