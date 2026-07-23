@@ -152,8 +152,9 @@ async function loadCollectibles() {
 }
 
 function renderCollectibleCard(item) {
-    const defaultImg = 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=600&auto=format&fit=crop&q=80';
-    const imgUrl = item.image_url || defaultImg;
+    const defaultImg = '/static/images/placeholder.png';
+    const rawUrl = item.image_url || item.cover_url;
+    const imgUrl = rawUrl ? rawUrl : defaultImg;
     const catClass = `cat-${item.category}`;
 
     const profitSign = item.profit_loss >= 0 ? '+' : '';
@@ -173,7 +174,7 @@ function renderCollectibleCard(item) {
     return `
     <div class="collectible-card glass-panel" id="card-${item.id}">
         <div class="card-image-wrap">
-            <img src="${imgUrl}" alt="${escapeHtml(item.title)}" loading="lazy">
+            <img src="${imgUrl}" onerror="this.onerror=null; this.src='/static/images/placeholder.png'; this.classList.add('img-fallback');" alt="${escapeHtml(item.title)}" loading="lazy">
             <span class="category-badge ${catClass}">${item.category.replace('_', ' ')}</span>
             ${item.condition_grade ? `<span class="grade-badge">${escapeHtml(item.condition_grade)}</span>` : ''}
         </div>

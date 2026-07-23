@@ -17,6 +17,7 @@ services:
       - EBAY_CLIENT_SECRET=${EBAY_CLIENT_SECRET}
     volumes:
       - vault-data:/app/data
+      - ./uploads:/app/uploads
     networks:
       - vault-network
 
@@ -33,6 +34,7 @@ services:
       - EBAY_CLIENT_SECRET=${EBAY_CLIENT_SECRET}
     volumes:
       - vault-data:/app/data
+      - ./uploads:/app/uploads
     networks:
       - vault-network
 

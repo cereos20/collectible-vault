@@ -89,6 +89,39 @@ def backfill_key_issues(db: Session) -> Dict[str, Any]:
     return {"total_items": len(items), "updated_items": updated_count}
 
 
+def infer_category_from_title(title: str, user_category: Optional[str] = None) -> str:
+    """Dynamically detects category from title text when unspecified or misaligned."""
+    t_lower = (title or "").lower()
+    if any(k in t_lower for k in ["action figure", "figure", "marvel legends", "star wars black series", "hot toys", "neca"]):
+        return "figure"
+    elif any(k in t_lower for k in ["funko", "pop!", "pop vinyl", "bitty pop"]):
+        return "funko"
+    elif any(k in t_lower for k in ["trading card", "card", "charizard", "pokemon", "magic the gathering", "mtg", "yugioh"]):
+        return "trading_card"
+    elif any(k in t_lower for k in ["comic", "spider-man", "batman", "hulk", "x-men", "iron man", "superman", "avengers"]):
+        return "comic"
+    return user_category or "other"
+
+
+def backfill_category_fixes(db: Session) -> Dict[str, Any]:
+    """
+    Scans all items in vault.db and fixes misaligned categories
+    (e.g., items titled 'Action Figure' assigned to category 'funko' or 'other').
+    """
+    items = db.query(CollectibleItem).all()
+    fixed_count = 0
+    for item in items:
+        t_lower = (item.title or "").lower()
+        if ("action figure" in t_lower or "figure" in t_lower) and item.category != "figure":
+            item.category = "figure"
+            fixed_count += 1
+
+    if fixed_count > 0:
+        db.commit()
+
+    return {"total_items": len(items), "fixed_items": fixed_count}
+
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     init_db()
@@ -96,6 +129,7 @@ async def lifespan(app_instance: FastAPI):
     try:
         seed_sample_data_if_empty(db)
         backfill_key_issues(db)
+        backfill_category_fixes(db)
         record_portfolio_snapshot(db)
     finally:
         db.close()
@@ -120,10 +154,13 @@ app.add_middleware(
 # Ensure directories exist
 os.makedirs("app/static/css", exist_ok=True)
 os.makedirs("app/static/js", exist_ok=True)
+os.makedirs("app/static/images", exist_ok=True)
+os.makedirs("uploads", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
 
 # Mount static files and templates
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 templates = Jinja2Templates(directory="templates")
 
 
@@ -278,11 +315,30 @@ def trigger_backfill_key_issues(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/admin/fix-categories")
+def trigger_fix_categories(db: Session = Depends(get_db)):
+    """Scans and re-aligns miscategorized vault items in vault.db."""
+    summary = backfill_category_fixes(db)
+    return {
+        "status": "success",
+        "message": "Categories re-aligned successfully",
+        "summary": summary
+    }
+
+
 @app.post("/api/items", response_model=CollectibleResponse, status_code=201)
+@app.post("/api/collectibles", response_model=CollectibleResponse, status_code=201)
 def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)):
     """Saves a new collectible item into the vault and records initial valuation history & snapshot."""
+    item_dict = item_in.model_dump()
+    inferred_cat = infer_category_from_title(item_in.title, item_in.category)
+    if ("action figure" in (item_in.title or "").lower() or "figure" in (item_in.title or "").lower()) and item_in.category != "figure":
+        item_dict["category"] = "figure"
+    elif inferred_cat != item_in.category and item_in.category in ["other", "funko"]:
+        item_dict["category"] = inferred_cat
+
     is_key, key_reason = detect_key_issue(item_in.title, item_in.notes)
-    item = CollectibleItem(**item_in.model_dump())
+    item = CollectibleItem(**item_dict)
     if is_key:
         item.is_key_issue = True
         item.key_reasons = key_reason
