@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.models import CollectibleItem, ValuationHistory, PriceHistory
+from app.services.pricecharting import query_pricecharting_api
 
 logger = logging.getLogger("vault.valuation")
 
@@ -652,12 +653,23 @@ def fetch_ebay_sold_comps(
     Fallback Default: Set market_value = $0.00 if 0 comps found.
     """
     clean_barcode = barcode.strip() if barcode else None
-
-    # Priority 1: Official eBay Browse API (UPC lookup)
     query_info = sanitize_and_disambiguate_query(title, category=category, condition_grade=condition_grade)
     title_query = query_info["api_query"]
     cat_id = query_info["category_id"]
 
+    # STAGE 1: PriceCharting API Guide Lookup
+    pc_price = query_pricecharting_api(
+        query=query_info["cleaned_title"],
+        condition_grade=condition_grade,
+        barcode=clean_barcode
+    )
+    if pc_price > 0:
+        log_msg = f"[VALUATION SUCCESS] Item: {title} | Method: PriceCharting API | Final Price: ${pc_price:.2f}"
+        logger.info(log_msg)
+        print(log_msg)
+        return pc_price
+
+    # STAGE 2 Priority 1: Official eBay Browse API (UPC lookup)
     if clean_barcode:
         api_upc_comps = query_ebay_browse_api(clean_barcode, gtin=clean_barcode, category_ids=cat_id)
         if api_upc_comps:
@@ -732,6 +744,9 @@ def fetch_ebay_sold_comps(
     logger.warning(no_comps_msg)
     print(no_comps_msg)
     return 0.0
+
+
+fetch_item_valuation = fetch_ebay_sold_comps
 
 
 def refresh_all_valuations(db: Session) -> List[Dict[str, Any]]:
