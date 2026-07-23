@@ -265,10 +265,10 @@ function renderCollectibleCard(item) {
         </div>
 
         <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
-            <button class="btn btn-secondary" style="flex:1; padding:0.4rem; font-size:0.8rem;" onclick="openHistoryModal(${item.id})">
+            <button class="btn btn-secondary valuation-btn" style="flex:1; padding:0.4rem; font-size:0.8rem;" onclick="openHistoryModal(${item.id})">
                 <i class="fas fa-chart-line"></i> Valuation
             </button>
-            <button class="btn btn-secondary" style="padding:0.4rem 0.6rem; color:var(--accent-cyan);" onclick="openEditModal(${item.id})">
+            <button class="btn btn-secondary edit-btn" style="padding:0.4rem 0.6rem; color:var(--accent-cyan);" onclick="openEditModal(${item.id})">
                 <i class="fas fa-edit"></i> Edit
             </button>
             <button class="btn btn-secondary" style="padding:0.4rem 0.6rem; color:var(--accent-rose);" onclick="deleteCollectible(${item.id})">

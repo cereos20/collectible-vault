@@ -53,7 +53,7 @@
                 <select id="llmModelSelect" class="form-select llm-model-select" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; width: auto; background: rgba(0,0,0,0.4);" title="Select Active LLM Model">
                     <option value="">Loading Models...</option>
                 </select>
-                <button class="btn btn-secondary" onclick="openAiSettingsModal()" title="Configure Ollama Host Endpoint URL" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem;">
+                <button class="btn btn-secondary" id="aiSettingsBtn" onclick="openAiSettingsModal()" title="Configure Ollama Host Endpoint URL" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem;">
                     <i class="fas fa-cog"></i> ⚙️ AI Settings
                 </button>
             </div>
@@ -64,7 +64,7 @@
             <button class="btn btn-secondary" id="btnExportJson" onclick="exportVaultJson()" title="Export vault backup to JSON">
                 <i class="fas fa-file-code"></i> JSON
             </button>
-            <button class="btn btn-secondary" id="btnRefreshValuationsAsync" onclick="triggerAsyncValuation()" title="Run background market valuation refresh">
+            <button class="btn btn-secondary" id="refreshValuationsBtn" onclick="triggerAsyncValuation()" title="Run background market valuation refresh">
                 <i class="fas fa-sync-alt"></i> Refresh Valuations (Async)
             </button>
             <button class="btn btn-secondary" id="btnToggleAssistant" onclick="toggleAssistantDrawer()" title="Open FastMCP AI Vault Assistant">
