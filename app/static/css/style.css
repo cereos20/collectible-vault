@@ -490,12 +490,12 @@ button,
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(8px);
   z-index: 2000;
-  display: none; /* MUST BE HIDDEN BY DEFAULT */
+  display: none !important; /* MUST BE HIDDEN BY DEFAULT */
   align-items: center;
   justify-content: center;
   padding: 1.5rem;
   opacity: 0;
-  pointer-events: none;
+  pointer-events: none !important;
   transition: opacity 0.3s ease;
 }
 
@@ -504,6 +504,12 @@ button,
   display: flex !important;
   opacity: 1 !important;
   pointer-events: auto !important;
+}
+
+.modal-container,
+.modal-content,
+.modal-body {
+  pointer-events: auto;
 }
 
 .modal-body {

@@ -119,6 +119,15 @@ function setupEventListeners() {
         }
     });
 
+    // Close modal when clicking dark backdrop outside container
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                closeModal(overlay.id);
+            }
+        });
+    });
+
     // Search input debounce
     const searchInput = document.getElementById('searchInput');
     if (searchInput) {
@@ -774,15 +783,17 @@ function handleLlmBadgeClick() {
 function openModal(id) {
     const el = document.getElementById(id);
     if (el) {
-        el.classList.add('active');
-        el.classList.add('show');
+        el.classList.add('active', 'show');
+        el.style.display = 'flex';
+        el.style.pointerEvents = 'auto';
     }
 }
 function closeModal(id) {
     const el = document.getElementById(id);
     if (el) {
-        el.classList.remove('active');
-        el.classList.remove('show');
+        el.classList.remove('active', 'show');
+        el.style.display = 'none';
+        el.style.pointerEvents = 'none';
     }
 }
 function escapeHtml(str) {
