@@ -11,7 +11,7 @@
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=2.0">
     <style>
         .meta-pills { max-width: 100%; overflow: hidden; }
         .meta-tag {
@@ -137,9 +137,9 @@
             </div>
 
             <div class="action-buttons" style="display:flex; gap:0.5rem; align-items:center;">
-                <a href="/api/export/csv" class="btn btn-outline" style="padding:0.4rem 0.8rem; font-size:0.85rem; border:1px solid var(--border-color); color:var(--text-color); border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:0.3rem;">📥 Export CSV</a>
-                <a href="/api/export/json" class="btn btn-outline" style="padding:0.4rem 0.8rem; font-size:0.85rem; border:1px solid var(--border-color); color:var(--text-color); border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:0.3rem;">📥 Export JSON</a>
-                <button id="btn-refresh-async" onclick="triggerAsyncValuation()" class="btn btn-primary" style="padding:0.4rem 0.8rem; font-size:0.85rem; display:inline-flex; align-items:center; gap:0.3rem;">⚡ Refresh Valuations</button>
+                <a href="/api/export/csv" class="btn btn-outline">📥 Export CSV</a>
+                <a href="/api/export/json" class="btn btn-outline">📥 Export JSON</a>
+                <button id="btn-refresh-async" onclick="triggerAsyncValuation()" class="btn btn-primary">⚡ Refresh Valuations</button>
             </div>
 
             <select id="sortSelect" class="form-select" style="width: auto; padding: 0.5rem 1rem;">
@@ -435,7 +435,7 @@
     </div>
 
     <!-- Client JS -->
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=2.0"></script>
     <script>
         function showIntakeTab(tab) {
             document.getElementById('intakeTabVision').style.display = tab === 'vision' ? 'block' : 'none';

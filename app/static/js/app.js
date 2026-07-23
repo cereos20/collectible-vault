@@ -167,7 +167,7 @@ function renderCollectibleCard(item) {
         .join('');
 
     const keyBadge = item.is_key_issue
-        ? `<span class="badge badge-key" style="background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; margin-left: 0.3rem;" title="${escapeHtml(item.key_reasons || 'Key Issue')}">🔑 KEY ISSUE</span>`
+        ? `<span class="badge badge-key" title="${escapeHtml(item.key_reasons || 'Key Issue')}">🔑 KEY ISSUE</span>`
         : '';
 
     return `
