@@ -1,9 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import Base, engine
+from app.database import Base, engine, init_db
 
-Base.metadata.create_all(bind=engine)
+init_db()
 client = TestClient(app)
 
 

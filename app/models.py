@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, JSON, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -19,6 +19,8 @@ class CollectibleItem(Base):
     image_url = Column(Text, nullable=True)
     barcode = Column(String(100), nullable=True, index=True)
     metadata_json = Column(JSON, default=dict)  # Flexible category fields e.g., issue_number, box_number, publisher, location, status, etc.
+    is_key_issue = Column(Boolean, default=False)
+    key_reasons = Column(String(255), nullable=True)
     
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

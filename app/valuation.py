@@ -402,6 +402,55 @@ def query_mycomicshop_fallback(query: str, barcode: Optional[str] = None) -> Lis
 query_ebay_sold_listings = query_mycomicshop_fallback
 
 
+def get_grade_multiplier(condition_grade: Optional[str]) -> float:
+    """
+    Returns CGC/CBCS condition grade scaling multiplier for raw FMV comps:
+    - 9.8 (Near Mint/Mint): 3.5x
+    - 9.6 (Near Mint+): 2.2x
+    - 9.0-9.4 (Near Mint): 1.4x
+    - 7.0-8.5 (Very Fine / Fine): 1.0x baseline raw FMV
+    - 4.0-6.5 (Very Good / Good): 0.6x
+    - 1.0-3.5 (Fair / Poor): 0.3x
+    """
+    if not condition_grade:
+        return 1.0
+
+    cg = str(condition_grade).lower()
+
+    # Extract explicit numeric grade if present e.g. "9.8", "CGC 9.8", "9.6", "9.0", "8.0", "6.5", "3.0"
+    match = re.search(r"\b(\d+(?:\.\d+)?)\b", cg)
+    if match:
+        num = float(match.group(1))
+        if num >= 9.7:
+            return 3.5
+        elif num >= 9.5:
+            return 2.2
+        elif num >= 8.9:
+            return 1.4
+        elif num >= 7.0:
+            return 1.0
+        elif num >= 4.0:
+            return 0.6
+        else:
+            return 0.3
+
+    # Text condition fallback parsing
+    if any(k in cg for k in ["gem", "mint 9.8", "9.8"]):
+        return 3.5
+    elif any(k in cg for k in ["near mint+", "nm+", "9.6"]):
+        return 2.2
+    elif any(k in cg for k in ["near mint", "nm", "vf/nm"]):
+        return 1.4
+    elif any(k in cg for k in ["very fine", "vf", "fine", "fn"]):
+        return 1.0
+    elif any(k in cg for k in ["very good", "vg", "good", "gd"]):
+        return 0.6
+    elif any(k in cg for k in ["fair", "fr", "poor", "pr"]):
+        return 0.3
+
+    return 1.0
+
+
 def calculate_comp_fmv(
     comp_prices: List[float],
     category: str = "comic",
@@ -409,7 +458,8 @@ def calculate_comp_fmv(
     current_val: float = 0.0
 ) -> float:
     """
-    Calculates Fair Market Value (FMV) using median across matching sold comps after 3x median & 1.5x IQR outlier removal.
+    Calculates Fair Market Value (FMV) using median across matching sold comps after 3x median & 1.5x IQR outlier removal,
+    applying CGC/CBCS condition grade scaling multipliers.
     Returns 0.0 if comp_prices is empty or invalid.
     Log line format: [EBAY MATH DEBUG] Raw Comps: {raw_prices} | Filtered Comps: {filtered_prices} | Median: ${median_price}
     """
@@ -432,6 +482,8 @@ def calculate_comp_fmv(
     is_graded = any(g in cond_clean for g in ["cgc", "cbcs", "pgx"])
 
     if category.lower() == "comic" and not is_graded:
+        mult = get_grade_multiplier(condition_grade)
+        median_val = median_val * mult
         if median_val > 30.0 and current_val > 0 and current_val <= 30.0:
             median_val = min(median_val, max(30.0, current_val * 1.25))
 

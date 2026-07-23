@@ -54,8 +54,14 @@
                 </select>
             </div>
 
-            <button class="btn btn-secondary" id="btnRefreshValuations">
-                <i class="fas fa-sync-alt"></i> Refresh Valuations
+            <button class="btn btn-secondary" id="btnExportCsv" onclick="exportVaultCsv()" title="Export vault to CSV">
+                <i class="fas fa-file-csv"></i> CSV
+            </button>
+            <button class="btn btn-secondary" id="btnExportJson" onclick="exportVaultJson()" title="Export vault backup to JSON">
+                <i class="fas fa-file-code"></i> JSON
+            </button>
+            <button class="btn btn-secondary" id="btnRefreshValuationsAsync" onclick="triggerAsyncValuation()" title="Run background market valuation refresh">
+                <i class="fas fa-sync-alt"></i> Refresh Valuations (Async)
             </button>
             <button class="btn btn-primary" onclick="openModal('intakeModal')">
                 <i class="fas fa-camera"></i> + Snap & Add Collectible

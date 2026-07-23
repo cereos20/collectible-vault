@@ -173,7 +173,10 @@ function renderCollectibleCard(item) {
             <span class="category-badge ${catClass}">${item.category.replace('_', ' ')}</span>
             ${item.condition_grade ? `<span class="grade-badge">${escapeHtml(item.condition_grade)}</span>` : ''}
         </div>
-        <div class="card-title">${escapeHtml(item.title)}</div>
+        <div class="card-title">
+            ${escapeHtml(item.title)}
+            ${item.is_key_issue ? `<span style="background: linear-gradient(135deg, #f39c12, #e67e22); color: #fff; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; margin-left: 0.3rem;" title="${escapeHtml(item.key_reasons || 'Key Issue')}">🔑 KEY ISSUE</span>` : ''}
+        </div>
         ${metaTags ? `<div class="meta-pills">${metaTags}</div>` : ''}
         
         <div class="financial-row">
@@ -199,6 +202,25 @@ function renderCollectibleCard(item) {
             </button>
         </div>
     </div>`;
+}
+
+function exportVaultCsv() {
+    window.location.href = '/api/export/csv';
+}
+
+function exportVaultJson() {
+    window.location.href = '/api/export/json';
+}
+
+async function triggerAsyncValuation() {
+    try {
+        const res = await fetch('/api/valuation/refresh-async', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || 'Background valuation refresh started.');
+    } catch (err) {
+        console.error('Failed to trigger async valuation:', err);
+        alert('Error triggering async valuation refresh.');
+    }
 }
 
 // --- BARCODE SCANNER INTAKE ---

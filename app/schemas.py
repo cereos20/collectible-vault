@@ -32,6 +32,8 @@ class CollectibleBase(BaseModel):
     image_url: Optional[str] = None
     barcode: Optional[str] = None
     metadata_json: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    is_key_issue: Optional[bool] = False
+    key_reasons: Optional[str] = None
 
 
 class CollectibleCreate(CollectibleBase):
@@ -48,6 +50,8 @@ class CollectibleUpdate(BaseModel):
     image_url: Optional[str] = None
     barcode: Optional[str] = None
     metadata_json: Optional[Dict[str, Any]] = None
+    is_key_issue: Optional[bool] = None
+    key_reasons: Optional[str] = None
     # Alias edit fields
     issue_number: Optional[str] = None
     grade: Optional[str] = None

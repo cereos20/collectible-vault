@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 DB_PATH = os.getenv("DATABASE_URL", "sqlite:///./vault.db")
@@ -22,4 +22,14 @@ def get_db():
 def init_db():
     import app.models  # Register models with Base.metadata
     Base.metadata.create_all(bind=engine)
-
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE collectibles ADD COLUMN is_key_issue BOOLEAN DEFAULT 0"))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE collectibles ADD COLUMN key_reasons VARCHAR(255)"))
+            conn.commit()
+        except Exception:
+            pass

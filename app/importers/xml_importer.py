@@ -5,6 +5,7 @@ from typing import Tuple, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.models import CollectibleItem, ValuationHistory
+from app.services.key_detector import detect_key_issue
 
 
 def parse_currency(val_str: str) -> float:
@@ -244,6 +245,7 @@ def import_comics_from_xml(db: Session, xml_content: bytes | str) -> Dict[str, A
     for item_data in parsed_items:
         try:
             notes_str = f"Publisher: {item_data['publisher']}" if item_data['publisher'] else "Imported via XML"
+            is_key, key_reason = detect_key_issue(item_data["title"], notes_str)
             
             collectible = CollectibleItem(
                 title=item_data["title"],
@@ -255,6 +257,8 @@ def import_comics_from_xml(db: Session, xml_content: bytes | str) -> Dict[str, A
                 barcode=item_data.get("barcode"),
                 image_url=item_data.get("image_url"),
                 metadata_json=item_data["metadata_json"],
+                is_key_issue=is_key,
+                key_reasons=key_reason,
                 created_at=now,
                 updated_at=now
             )

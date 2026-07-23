@@ -69,7 +69,7 @@ def test_query_ebay_browse_api_category_lock_and_keyword_filtering(capsys):
 def test_calculate_comp_fmv_3x_median_outlier_removal(capsys):
     # Comps: [10, 12, 14, 15, 100] -> initial median = 14.0 -> 3x median = 42.0 -> 100.0 removed as > 42.0
     comp_prices = [10.0, 12.0, 14.0, 15.0, 100.0]
-    fmv = calculate_comp_fmv(comp_prices, category="comic", condition_grade="Near Mint", current_val=15.0)
+    fmv = calculate_comp_fmv(comp_prices, category="comic", condition_grade="Fine 8.0", current_val=15.0)
     assert fmv == 13.0
 
     captured = capsys.readouterr()
@@ -101,7 +101,7 @@ def test_fetch_ebay_sold_comps_multi_stage_fallback(capsys):
 
     with patch("app.valuation.get_ebay_oauth_token", return_value="mock_token"), \
          patch("requests.get", side_effect=mock_get):
-        fmv = fetch_ebay_sold_comps("The Amazing Spider-Man #624", "comic", 0.0, "Near Mint")
+        fmv = fetch_ebay_sold_comps("The Amazing Spider-Man #624", "comic", 0.0, "Fine 8.0")
         assert fmv == 40.00
 
         captured = capsys.readouterr()

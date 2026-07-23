@@ -1,11 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.database import get_db, Base, engine
+from app.database import get_db, Base, engine, init_db
 from sqlalchemy.orm import sessionmaker
 
-# Create test DB tables
-Base.metadata.create_all(bind=engine)
+# Create test DB tables & run column migrations
+init_db()
 client = TestClient(app)
 
 

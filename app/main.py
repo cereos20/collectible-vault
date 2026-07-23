@@ -33,6 +33,7 @@ from app.vision_ai import analyze_collectible_image
 from app.valuation import lookup_barcode_data, fetch_ebay_sold_comps, refresh_all_valuations, seed_sample_data_if_empty
 from app.importers.xml_importer import import_comics_from_xml
 from app.services.llm import check_ollama_status, set_active_model, get_active_model
+from app.services.key_detector import detect_key_issue
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vault")
@@ -229,10 +230,31 @@ def list_collectibles(
     return result
 
 
+@app.get("/api/items/keys", response_model=List[CollectibleResponse])
+def get_key_issues(db: Session = Depends(get_db)):
+    """Filters exclusively for key issues in the vault."""
+    items = db.query(CollectibleItem).filter(CollectibleItem.is_key_issue == True).all()
+    result = []
+    for item in items:
+        resp = CollectibleResponse.model_validate(item)
+        resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
+        resp.profit_loss_percentage = round(
+            ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
+            if item.purchase_price > 0 else 0.0, 1
+        )
+        result.append(resp)
+    return result
+
+
 @app.post("/api/items", response_model=CollectibleResponse, status_code=201)
 def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)):
     """Saves a new collectible item into the vault and records initial valuation history & snapshot."""
+    is_key, key_reason = detect_key_issue(item_in.title, item_in.notes)
     item = CollectibleItem(**item_in.model_dump())
+    if is_key:
+        item.is_key_issue = True
+        item.key_reasons = key_reason
+
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -300,6 +322,11 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
     for field, val in update_data.items():
         if hasattr(item, field) and val is not None:
             setattr(item, field, val)
+
+    # Evaluate key issue status
+    is_key, key_reason = detect_key_issue(item.title, item.notes)
+    item.is_key_issue = is_key
+    item.key_reasons = key_reason
 
     db.commit()
     record_portfolio_snapshot(db)
