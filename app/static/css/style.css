@@ -153,8 +153,13 @@ h1, h2, h3, h4, .brand-text {
   font-size: 0.55rem;
 }
 
-/* Buttons */
-.btn {
+/* Buttons & Interactive Elements */
+.btn,
+.edit-btn,
+.valuation-btn,
+.pill,
+button,
+[role="button"] {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
@@ -162,9 +167,20 @@ h1, h2, h3, h4, .brand-text {
   border-radius: var(--radius-md);
   font-weight: 600;
   font-size: 0.9rem;
-  cursor: pointer;
+  cursor: pointer !important;
+  user-select: none !important; /* Prevents text highlighting on click */
+  -webkit-user-select: none !important;
+  pointer-events: auto !important;
   border: 1px solid transparent;
   transition: var(--transition-fast);
+}
+
+/* Ensure inner icons and spans do NOT intercept clicks or text focus */
+.btn *,
+.edit-btn *,
+.valuation-btn *,
+.pill * {
+  pointer-events: none !important;
 }
 
 .btn-primary {
