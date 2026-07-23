@@ -9,18 +9,18 @@ client = TestClient(app)
 
 
 def test_detect_key_issue_iconic_books():
-    # 1. Amazing Spider-Man 300
-    is_key, reason = detect_key_issue("The Amazing Spider-Man, Vol. 1 #300")
+    # 1. Amazing Spider-Man 300 & 300A variant
+    is_key, reason = detect_key_issue("The Amazing Spider-Man, Vol. 1 #300A")
     assert is_key is True
     assert "Venom" in reason
 
-    # 2. Secret Wars 8
-    is_key, reason = detect_key_issue("Marvel Super Heroes Secret Wars #8")
+    # 2. Secret Wars 8 & 8B variant
+    is_key, reason = detect_key_issue("Marvel Super Heroes Secret Wars #8B")
     assert is_key is True
     assert "Black Suit" in reason or "Symbiote" in reason
 
     # 3. Incredible Hulk 181
-    is_key, reason = detect_key_issue("The Incredible Hulk #181")
+    is_key, reason = detect_key_issue("The Incredible Hulk #181A")
     assert is_key is True
     assert "Wolverine" in reason
 

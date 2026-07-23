@@ -251,17 +251,18 @@ def sanitize_and_disambiguate_query(
     """
     clean_title = title or ""
     
-    # Strip leading "The ", volume numbers, and parenthetical metadata
+    # Strip leading "The ", volume numbers, parenthetical metadata, and cover variant letters (#618A -> 618)
     clean_title = re.sub(r"^The\s+", "", clean_title, flags=re.IGNORECASE)
     clean_title = re.sub(r",?\s*vol\.?\s*\d+", "", clean_title, flags=re.IGNORECASE)
     clean_title = re.sub(r"\(.*?\)", "", clean_title)
+    clean_title = re.sub(r"#?\b(\d+(?:\.\d+)?)[a-zA-Z]+\d*\b", r"\1", clean_title)
     clean_title = re.sub(r"[/:,#\"']", " ", clean_title)
     clean_title = re.sub(r"\s+", " ", clean_title).strip()
 
     # Extract issue number if embedded in title
     issue = issue_number or ""
     if not issue:
-        issue_match = re.search(r"#?\b(\d+(?:\.\d+)?)[a-zA-Z]*\b", clean_title)
+        issue_match = re.search(r"#?\b(\d+(?:\.\d+)?)\b", clean_title)
         if issue_match:
             issue = issue_match.group(1)
 

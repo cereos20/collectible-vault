@@ -30,7 +30,7 @@ KEY_ISSUE_PATTERNS: List[Tuple[str, str]] = [
 
 def normalize_key_text(text: Optional[str]) -> str:
     """
-    Strips volume info, leading 'The', punctuation, and extra whitespace
+    Strips volume info, leading 'The', cover variant letters, punctuation, and extra whitespace
     to ensure robust key issue matching regardless of formatting.
     """
     if not text:
@@ -38,6 +38,7 @@ def normalize_key_text(text: Optional[str]) -> str:
     t = text.lower()
     t = re.sub(r",?\s*vol\.?\s*\d+", "", t, flags=re.IGNORECASE)
     t = re.sub(r"^the\s+", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"#?\b(\d+(?:\.\d+)?)[a-zA-Z]+\d*\b", r"\1", t)
     t = re.sub(r"[/:,#\"'\-\.]", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t

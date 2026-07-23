@@ -22,6 +22,18 @@ def test_sanitize_and_disambiguate_query_short_title():
     assert "-cgc" not in info_graded["api_query"]  # Should NOT exclude CGC when graded
 
 
+def test_sanitize_and_disambiguate_query_strips_variant_letters():
+    info_618a = sanitize_and_disambiguate_query("The Amazing Spider-Man #618A", category="comic")
+    assert info_618a["cleaned_title"] == "Amazing Spider-Man 618"
+    assert "Amazing Spider-Man 618 comic" in info_618a["api_query"]
+
+    info_615a = sanitize_and_disambiguate_query("Amazing Spider-Man 615A", category="comic")
+    assert info_615a["cleaned_title"] == "Amazing Spider-Man 615"
+
+    info_620a = sanitize_and_disambiguate_query("The Amazing Spider-Man #620A", category="comic")
+    assert info_620a["cleaned_title"] == "Amazing Spider-Man 620"
+
+
 def test_sanitize_and_disambiguate_query_categories():
     # Trading Card
     tc_info = sanitize_and_disambiguate_query("Charizard Holo", category="trading_card")
