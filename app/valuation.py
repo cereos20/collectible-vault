@@ -6,7 +6,7 @@ import random
 import logging
 import requests
 import statistics
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.models import CollectibleItem, ValuationHistory, PriceHistory
@@ -233,7 +233,7 @@ def lookup_barcode_data(barcode: str) -> Dict[str, Any]:
         "condition_grade": "Near Mint",
         "estimated_market_value": 0.0,
         "purchase_price": 20.00,
-        "metadata_json": {"upc": cleaned, "scanned_at": datetime.utcnow().isoformat()}
+        "metadata_json": {"upc": cleaned, "scanned_at": datetime.now(timezone.utc).isoformat()}
     }
 
 

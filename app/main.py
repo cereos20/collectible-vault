@@ -171,7 +171,7 @@ def list_collectibles(
 
     result = []
     for item in items:
-        resp = CollectibleResponse.from_orm(item)
+        resp = CollectibleResponse.model_validate(item)
         resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
         resp.profit_loss_percentage = round(
             ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
@@ -194,7 +194,7 @@ def list_collectibles(
 @app.post("/api/items", response_model=CollectibleResponse, status_code=201)
 def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)):
     """Saves a new collectible item into the vault and records initial valuation history."""
-    item = CollectibleItem(**item_in.dict())
+    item = CollectibleItem(**item_in.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -208,7 +208,7 @@ def create_collectible(item_in: CollectibleCreate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(item)
 
-    resp = CollectibleResponse.from_orm(item)
+    resp = CollectibleResponse.model_validate(item)
     resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
     return resp
 
@@ -219,7 +219,7 @@ def get_collectible(item_id: int, db: Session = Depends(get_db)):
     if not item:
         raise HTTPException(status_code=404, detail="Collectible item not found")
     
-    resp = CollectibleResponse.from_orm(item)
+    resp = CollectibleResponse.model_validate(item)
     resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
     resp.profit_loss_percentage = round(
         ((item.current_market_value - item.purchase_price) / item.purchase_price * 100)
@@ -234,7 +234,7 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
     if not item:
         raise HTTPException(status_code=404, detail="Collectible item not found")
 
-    update_data = item_in.dict(exclude_unset=True)
+    update_data = item_in.model_dump(exclude_unset=True)
 
     if "grade" in update_data and update_data["grade"] is not None:
         update_data["condition_grade"] = update_data.pop("grade")
@@ -264,7 +264,7 @@ def update_collectible(item_id: int, item_in: CollectibleUpdate, db: Session = D
     db.commit()
     db.refresh(item)
     
-    resp = CollectibleResponse.from_orm(item)
+    resp = CollectibleResponse.model_validate(item)
     resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
     return resp
 
@@ -304,7 +304,7 @@ def export_vault_csv(db: Session = Depends(get_db)):
         ])
 
     output.seek(0)
-    filename = f"collectible_vault_export_{datetime.now().strftime('%Y%m%d')}.csv"
+    filename = f"collectible_vault_export_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode("utf-8")),
         media_type="text/csv",
@@ -332,7 +332,7 @@ def export_vault_json(db: Session = Depends(get_db)):
             "created_at": i.created_at.isoformat() if i.created_at else None
         })
 
-    filename = f"collectible_vault_backup_{datetime.now().strftime('%Y%m%d')}.json"
+    filename = f"collectible_vault_backup_{datetime.now(timezone.utc).strftime('%Y%m%d')}.json"
     return JSONResponse(
         content=data,
         headers={"Content-Disposition": f"attachment; filename={filename}"}
@@ -370,7 +370,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     top_items_models = db.query(CollectibleItem).order_by(desc(CollectibleItem.current_market_value)).limit(4).all()
     top_items = []
     for item in top_items_models:
-        resp = CollectibleResponse.from_orm(item)
+        resp = CollectibleResponse.model_validate(item)
         resp.profit_loss = round(item.current_market_value - item.purchase_price, 2)
         top_items.append(resp)
 
@@ -397,7 +397,7 @@ def get_watchlist(db: Session = Depends(get_db)):
 @app.post("/api/watchlist", response_model=WatchlistResponse, status_code=201)
 def create_watchlist_item(item_in: WatchlistCreate, db: Session = Depends(get_db)):
     """Creates a new watchlist target item."""
-    item = WatchlistItem(**item_in.dict())
+    item = WatchlistItem(**item_in.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)

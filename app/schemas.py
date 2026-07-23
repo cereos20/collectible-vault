@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -9,8 +9,7 @@ class ValuationHistoryResponse(BaseModel):
     recorded_at: datetime
     source: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PriceHistoryResponse(BaseModel):
@@ -20,13 +19,12 @@ class PriceHistoryResponse(BaseModel):
     source: str
     timestamp: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CollectibleBase(BaseModel):
-    title: str = Field(..., example="The Amazing Spider-Man #300")
-    category: str = Field(..., example="comic")  # comic, funko, figure, trading_card, other
+    title: str = Field(..., json_schema_extra={"example": "The Amazing Spider-Man #300"})
+    category: str = Field(..., json_schema_extra={"example": "comic"})  # comic, funko, figure, trading_card, other
     purchase_price: float = Field(0.0, ge=0.0)
     current_market_value: float = Field(0.0, ge=0.0)
     condition_grade: Optional[str] = "Near Mint"
@@ -66,8 +64,7 @@ class CollectibleResponse(CollectibleBase):
     profit_loss_percentage: float = 0.0
     valuation_history: List[ValuationHistoryResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BarcodeIntakeRequest(BaseModel):
@@ -116,5 +113,4 @@ class WatchlistResponse(WatchlistBase):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

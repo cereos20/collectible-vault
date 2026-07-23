@@ -1,6 +1,6 @@
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple, List, Dict, Any
 from sqlalchemy.orm import Session
 
@@ -239,7 +239,7 @@ def import_comics_from_xml(db: Session, xml_content: bytes | str) -> Dict[str, A
         }
 
     imported_count = 0
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     for item_data in parsed_items:
         try:
