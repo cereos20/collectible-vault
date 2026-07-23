@@ -41,10 +41,10 @@ def test_sanitize_and_disambiguate_query_categories():
 def test_calculate_robust_fmv_v2_4stage_pipeline():
     # Raw comps with extreme outliers: [5.0, 10.0, 10.0, 12.0, 12.0, 15.0, 500.0]
     # Gross lot filter (3x median ~36) drops 500.0
-    # Condition: 9.8 (3.5x multiplier)
-    fmv_98 = calculate_robust_fmv_v2([5.0, 10.0, 10.0, 12.0, 12.0, 15.0, 500.0], category="comic", condition_grade="CGC 9.8")
-    # Base median after trimming ~11.0 * 3.5 = 38.5
-    assert fmv_98 > 30.0
+    # Ungraded Raw Condition: Near Mint 9.8 (3.5x multiplier on raw comps)
+    fmv_98 = calculate_robust_fmv_v2([5.0, 10.0, 10.0, 12.0, 12.0, 15.0, 500.0], category="comic", condition_grade="Near Mint 9.8")
+    # Base median after trimming 12.0 * 3.5 = 42.0
+    assert fmv_98 == 42.0
 
     # Fine 8.0 (1.0x baseline multiplier)
     fmv_80 = calculate_robust_fmv_v2([10.0, 10.0, 12.0, 12.0, 14.0], category="comic", condition_grade="Fine 8.0")
