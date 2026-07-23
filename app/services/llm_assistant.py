@@ -322,21 +322,32 @@ async def query_vault_assistant(
         "category_summary": ctx["category_summary_str"]
     }
 
-    # Attempt Ollama API call with normalized model tag
+    # Attempt Ollama API call with normalized model tag via /api/chat (or /api/generate fallback)
     host = get_ollama_host()
-    url = f"{host}/api/generate"
-    payload = {
+    chat_url = f"{host}/api/chat"
+    generate_url = f"{host}/api/generate"
+
+    system_content = f"{SYSTEM_INSTRUCTION}\n\nVault Context:\n- Total Items: {ctx['total_items']}\n- Market Value: ${ctx['total_value']:.2f}\n- Capital Invested: ${ctx['total_cost']:.2f}\n- Net Profit: ${ctx['profit_loss']:+.2f} ({ctx['profit_pct']:+.1f}%)\n- Key Issues: {ctx['key_count']}\n- Category Breakdown: {ctx['category_summary_str']}\n\nRelevant Items:\n{ctx['relevant_items_str']}\n\nTop Valued Items:\n{ctx['top_items_str']}"
+
+    chat_payload = {
         "model": target_model,
-        "prompt": full_prompt,
+        "messages": [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_prompt}
+        ],
         "stream": False
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.post(chat_url, json=chat_payload)
+            if resp.status_code == 404:
+                gen_payload = {"model": target_model, "prompt": full_prompt, "stream": False}
+                resp = await client.post(generate_url, json=gen_payload)
+
             if resp.status_code == 200:
                 data = resp.json()
-                assistant_text = data.get("response", "").strip()
+                assistant_text = (data.get("message", {}).get("content") or data.get("response", "")).strip()
                 if assistant_text:
                     return {
                         "status": "success",
@@ -348,6 +359,8 @@ async def query_vault_assistant(
                     logger.warning("Ollama returned empty response text.")
             else:
                 logger.warning(f"Ollama returned HTTP {resp.status_code}: {resp.text[:200]}")
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"Ollama HTTP status error ({e.response.status_code}): {e}")
     except Exception as e:
         logger.warning(f"Ollama API connection failed ({host}): {e}")
 
@@ -466,21 +479,33 @@ async def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
 
     # Attempt optional non-blocking LLM enhancement with strict 3.0s timeout
     host = get_ollama_host()
-    url = f"{host}/api/generate"
+    chat_url = f"{host}/api/chat"
+    generate_url = f"{host}/api/generate"
     model = get_active_model()
-    prompt = (
-        f"Portfolio stats: Total items {total_items}, Total value ${total_val:.2f}, "
-        f"Top category {top_cat_name} ({top_cat_pct}% of portfolio), Key issues {key_count} (${key_val:.2f}). "
-        "Summarize portfolio health in 2 key insights bullet points and 1 actionable advice line."
-    )
-    payload = {"model": model, "prompt": prompt, "stream": False}
+
+    chat_payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a portfolio analyst for a collectibles collection."},
+            {"role": "user", "content": f"Portfolio stats: Total items {total_items}, Total value ${total_val:.2f}, Top category {top_cat_name} ({top_cat_pct}% of portfolio), Key issues {key_count} (${key_val:.2f}). Summarize portfolio health in 2 key insights bullet points and 1 actionable advice line."}
+        ],
+        "stream": False
+    }
 
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(chat_url, json=chat_payload)
+            if resp.status_code == 404:
+                gen_payload = {
+                    "model": model,
+                    "prompt": f"Portfolio stats: Total items {total_items}, Total value ${total_val:.2f}, Top category {top_cat_name} ({top_cat_pct}% of portfolio), Key issues {key_count} (${key_val:.2f}). Summarize portfolio health in 2 bullet points and 1 advice line.",
+                    "stream": False
+                }
+                resp = await client.post(generate_url, json=gen_payload)
+
             if resp.status_code == 200:
                 data = resp.json()
-                text = data.get("response", "").strip()
+                text = (data.get("message", {}).get("content") or data.get("response", "")).strip()
                 if text:
                     lines = [line.strip() for line in text.split("\n") if line.strip()]
                     advice = lines[-1] if len(lines) > 2 else fallback_advice
@@ -498,7 +523,7 @@ async def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
                         "insights": insights,
                         "advice": advice
                     }
-    except Exception as e:
+    except (httpx.HTTPStatusError, Exception) as e:
         logger.debug(f"Ollama portfolio insights LLM request skipped ({e}). Returning instant pre-computed fallback.")
 
     return fallback_response
