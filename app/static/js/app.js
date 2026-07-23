@@ -1,4 +1,21 @@
 // Universal Collectibles Vault - Client Application Engine
+window.addEventListener('click', (e) => {
+    try {
+        const topElem = document.elementFromPoint(e.clientX, e.clientY);
+        if (topElem) {
+            console.log('[DIAGNOSTIC] Click detected on:', {
+                target: e.target,
+                topElementAtPoint: topElem,
+                pointerEvents: window.getComputedStyle(topElem).pointerEvents,
+                zIndex: window.getComputedStyle(topElem).zIndex,
+                classes: topElem.className
+            });
+        }
+    } catch (err) {
+        // Silent catch
+    }
+}, true);
+
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
 });
