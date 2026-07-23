@@ -404,9 +404,10 @@ def generate_item_market_summary(item_id: int, db: Session) -> Dict[str, Any]:
     }
 
 
-def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
+async def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
     """
     Analyzes overall vault composition, category distribution, top gains, and yields proactive AI insights.
+    Uses non-blocking async execution with a strict 3.0s timeout and instant pre-computed SQLite fallback.
     """
     items = db.query(CollectibleItem).all()
     if not items:
@@ -439,19 +440,19 @@ def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
     cat_display_map = {"comic": "Comic Books", "funko": "Funko Pops", "figure": "Action Figures", "trading_card": "Trading Cards"}
     top_cat_name = cat_display_map.get(top_cat[0], top_cat[0].capitalize())
 
-    headline = f"Portfolio Insight: {top_cat_name} Lead Vault at {top_cat_pct}% Concentration (${top_cat[1]:,.2f})"
+    fallback_headline = f"Portfolio Insight: {top_cat_name} Lead Vault at {top_cat_pct}% Concentration (${top_cat[1]:,.2f})"
 
-    insights = [
+    fallback_insights = [
         f"Vault holds {total_items} items with a total Fair Market Value of ${total_val:,.2f} (Net Gain ${total_gain:+,.2f}, {overall_roi:+.1f}% ROI).",
         f"Top category '{top_cat_name}' represents ${top_cat[1]:,.2f} ({top_cat_pct}% of total asset value).",
         f"{key_count} verified key issues represent ${key_val:,.2f} ({key_pct}% of total portfolio valuation)."
     ]
 
-    advice = "Consider grading high-value raw key issues or balancing portfolio exposure across underrepresented categories."
+    fallback_advice = "Consider grading high-value raw key issues or balancing portfolio exposure across underrepresented categories."
 
-    return {
+    fallback_response = {
         "status": "success",
-        "headline": headline,
+        "headline": fallback_headline,
         "total_items": total_items,
         "total_value": total_val,
         "total_gain": total_gain,
@@ -459,7 +460,46 @@ def generate_portfolio_insights(db: Session) -> Dict[str, Any]:
         "top_category": top_cat_name,
         "top_category_percentage": top_cat_pct,
         "key_issues_count": key_count,
-        "insights": insights,
-        "advice": advice
+        "insights": fallback_insights,
+        "advice": fallback_advice
     }
+
+    # Attempt optional non-blocking LLM enhancement with strict 3.0s timeout
+    host = get_ollama_host()
+    url = f"{host}/api/generate"
+    model = get_active_model()
+    prompt = (
+        f"Portfolio stats: Total items {total_items}, Total value ${total_val:.2f}, "
+        f"Top category {top_cat_name} ({top_cat_pct}% of portfolio), Key issues {key_count} (${key_val:.2f}). "
+        "Summarize portfolio health in 2 key insights bullet points and 1 actionable advice line."
+    )
+    payload = {"model": model, "prompt": prompt, "stream": False}
+
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                text = data.get("response", "").strip()
+                if text:
+                    lines = [line.strip() for line in text.split("\n") if line.strip()]
+                    advice = lines[-1] if len(lines) > 2 else fallback_advice
+                    insights = lines[:-1] if len(lines) > 2 else fallback_insights
+                    return {
+                        "status": "success",
+                        "headline": fallback_headline,
+                        "total_items": total_items,
+                        "total_value": total_val,
+                        "total_gain": total_gain,
+                        "overall_roi": overall_roi,
+                        "top_category": top_cat_name,
+                        "top_category_percentage": top_cat_pct,
+                        "key_issues_count": key_count,
+                        "insights": insights,
+                        "advice": advice
+                    }
+    except Exception as e:
+        logger.debug(f"Ollama portfolio insights LLM request skipped ({e}). Returning instant pre-computed fallback.")
+
+    return fallback_response
 

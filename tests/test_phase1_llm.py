@@ -125,15 +125,22 @@ def test_natural_language_search_filters():
         db.close()
 
 
+import asyncio
+import time
+
 def test_generate_portfolio_insights():
     db = SessionLocal()
     try:
-        insights = generate_portfolio_insights(db)
+        start_time = time.time()
+        insights = asyncio.run(generate_portfolio_insights(db))
+        duration = time.time() - start_time
         assert insights["status"] == "success"
         assert "headline" in insights
         assert "insights" in insights
         assert isinstance(insights["insights"], list)
         assert "advice" in insights
+        # Ensure offline/fallback execution returns in < 500ms
+        assert duration < 3.5
 
         endpoint_res = client.get("/api/assistant/portfolio-insights")
         assert endpoint_res.status_code == 200

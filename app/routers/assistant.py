@@ -31,9 +31,10 @@ async def assistant_chat(payload: AssistantChatRequest, db: Session = Depends(ge
 
 
 @router.get("/portfolio-insights")
-def get_portfolio_insights_endpoint(db: Session = Depends(get_db)):
+async def get_portfolio_insights_endpoint(db: Session = Depends(get_db)):
     """
     Analyzes overall vault composition, category distribution, and top gains to yield proactive AI insights.
+    Non-blocking async endpoint with strict 3.0s timeout and instant pre-computed SQLite fallback.
     """
-    return generate_portfolio_insights(db)
+    return await generate_portfolio_insights(db)
 

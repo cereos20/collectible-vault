@@ -1,13 +1,15 @@
-import time
 import os
+import time
+import json
 import httpx
 import logging
 from typing import Dict, Any, List
 
 logger = logging.getLogger("vault.llm")
 
-# Global in-memory Ollama host & model configuration
-_ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+SETTINGS_FILE = os.path.join("data", "ollama_settings.json")
+_settings_loaded: bool = False
+_ollama_host: str = ""
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2-vl")
 _active_model: str = DEFAULT_MODEL
 
@@ -17,21 +19,49 @@ _status_cache_time: float = 0.0
 CACHE_TTL_SECONDS: float = 5.0
 
 
+def _load_settings_if_needed():
+    global _ollama_host, _active_model, _settings_loaded
+    if _settings_loaded:
+        return
+    _settings_loaded = True
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+                if data.get("ollama_host"):
+                    _ollama_host = data["ollama_host"].strip().rstrip("/")
+                if data.get("active_model"):
+                    _active_model = data["active_model"].strip()
+        except Exception as e:
+            logger.warning(f"Failed to read disk settings file: {e}")
+
+
 def get_ollama_host() -> str:
-    """Returns the currently configured Ollama base host URL (without trailing slash)."""
+    """Returns the currently configured Ollama base host URL, checking saved runtime/disk settings first."""
     global _ollama_host
+    _load_settings_if_needed()
+    if not _ollama_host:
+        _ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434").strip().rstrip("/")
     return _ollama_host.strip().rstrip("/")
 
 
 def set_ollama_host(host_url: str) -> str:
-    """Updates the configured Ollama base host URL and invalidates status cache."""
-    global _ollama_host, _status_cache_time
+    """Updates the configured Ollama base host URL, invalidates status cache, and persists to disk."""
+    global _ollama_host, _status_cache_time, _settings_loaded
+    _settings_loaded = True
     if host_url and host_url.strip():
         clean_url = host_url.strip().rstrip("/")
         if not clean_url.startswith("http://") and not clean_url.startswith("https://"):
             clean_url = f"http://{clean_url}"
         _ollama_host = clean_url
         _status_cache_time = 0.0  # Invalidate status cache on setting update
+        try:
+            os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+            with open(SETTINGS_FILE, "w") as f:
+                json.dump({"ollama_host": _ollama_host, "active_model": get_active_model()}, f)
+        except Exception as e:
+            logger.warning(f"Could not persist Ollama host setting: {e}")
+
         logger.info(f"Configured Ollama Host updated to: {_ollama_host}")
     return get_ollama_host()
 
